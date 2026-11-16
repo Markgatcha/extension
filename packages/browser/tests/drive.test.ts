@@ -109,6 +109,7 @@ describe('drive', () => {
     expect([...DRIVE].sort()).toEqual([
       'hanzo.act',
       'hanzo.annotate',
+      'hanzo.inspected',
       'hanzo.navigate',
       'hanzo.read',
       'hanzo.snapshot',

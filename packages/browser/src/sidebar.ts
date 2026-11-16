@@ -867,139 +867,28 @@ class HanzoSidebar {
     if (!btn) return;
     btn.classList.toggle('active');
 
-    if (btn.classList.contains('active')) {
-      // Inject picker script into active tab
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) return;
-
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            // Remove any existing picker
-            document.getElementById('__hanzo_picker_overlay')?.remove();
-
-            const overlay = document.createElement('div');
-            overlay.id = '__hanzo_picker_overlay';
-            overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;';
-
-            const highlight = document.createElement('div');
-            highlight.style.cssText = 'position:fixed;border:2px solid #4CAF50;background:rgba(76,175,80,0.1);pointer-events:none;transition:all 0.1s;z-index:2147483647;border-radius:2px;';
-            overlay.appendChild(highlight);
-
-            const label = document.createElement('div');
-            label.style.cssText = 'position:fixed;background:#222;color:#fff;font:11px/1.4 monospace;padding:4px 8px;border-radius:4px;z-index:2147483647;pointer-events:none;max-width:300px;word-break:break-all;';
-            overlay.appendChild(label);
-
-            let lastTarget: Element | null = null;
-
-            overlay.addEventListener('mousemove', (e) => {
-              overlay.style.pointerEvents = 'none';
-              const el = document.elementFromPoint(e.clientX, e.clientY);
-              overlay.style.pointerEvents = '';
-              if (!el || el === overlay) return;
-              lastTarget = el;
-              const rect = el.getBoundingClientRect();
-              highlight.style.left = rect.left + 'px';
-              highlight.style.top = rect.top + 'px';
-              highlight.style.width = rect.width + 'px';
-              highlight.style.height = rect.height + 'px';
-
-              const tag = el.tagName.toLowerCase();
-              const id = el.id ? `#${el.id}` : '';
-              const cls = el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).join('.') : '';
-              const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
-              label.textContent = `<${tag}${id}${cls}> ${size}`;
-              label.style.left = Math.min(e.clientX + 12, window.innerWidth - 310) + 'px';
-              label.style.top = Math.min(e.clientY + 12, window.innerHeight - 30) + 'px';
-            });
-
-            overlay.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              overlay.remove();
-
-              if (!lastTarget) return;
-              const el = lastTarget;
-              const rect = el.getBoundingClientRect();
-              const computed = getComputedStyle(el);
-              const info = {
-                tag: el.tagName.toLowerCase(),
-                id: el.id || null,
-                classes: el.className && typeof el.className === 'string' ? el.className.trim().split(/\s+/) : [],
-                text: (el.textContent || '').trim().substring(0, 100),
-                href: (el as HTMLAnchorElement).href || null,
-                src: (el as HTMLImageElement).src || null,
-                rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
-                styles: {
-                  color: computed.color,
-                  backgroundColor: computed.backgroundColor,
-                  fontSize: computed.fontSize,
-                  fontWeight: computed.fontWeight,
-                  display: computed.display,
-                  position: computed.position,
-                },
-                selector: (() => {
-                  if (el.id) return `#${el.id}`;
-                  let s = el.tagName.toLowerCase();
-                  if (el.className && typeof el.className === 'string') s += '.' + el.className.trim().split(/\s+/).join('.');
-                  return s;
-                })(),
-              };
-
-              // Send back to extension
-              window.postMessage({ type: '__hanzo_pick_result', info }, '*');
-            });
-
-            document.body.appendChild(overlay);
-
-            // ESC to cancel
-            const escHandler = (e: KeyboardEvent) => {
-              if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); window.postMessage({ type: '__hanzo_pick_result', info: null }, '*'); }
-            };
-            document.addEventListener('keydown', escHandler);
-          },
-        });
-
-        // Listen for result from content script
-        const resultHandler = (message: any) => {
-          if (message.action === 'inspector.pickResult') {
-            chrome.runtime.onMessage.removeListener(resultHandler);
-            btn.classList.remove('active');
-            this.showInspectorResult(message.info);
-          }
-        };
-        chrome.runtime.onMessage.addListener(resultHandler);
-
-        // Also inject a message relay
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            window.addEventListener('message', (e) => {
-              if (e.data?.type === '__hanzo_pick_result') {
-                chrome.runtime.sendMessage({ action: 'inspector.pickResult', info: e.data.info });
-              }
-            }, { once: true });
-          },
-        });
-
-      } catch (error) {
-        debugLog('Pick element failed:', error);
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) { btn.classList.remove('active'); return; }
+    if (!btn.classList.contains('active')) {
+      chrome.tabs.sendMessage(tab.id, { action: 'tool.picker.stop' }, () => void chrome.runtime.lastError);
+      return;
+    }
+    // The page's own picker (content-script.ts); the background describes the
+    // pick, keeps it for the agent, and broadcasts it here.
+    const onPicked = (message: any) => {
+      if (message?.action !== 'inspector.picked') return;
+      chrome.runtime.onMessage.removeListener(onPicked);
+      btn.classList.remove('active');
+      this.showInspectorResult(message.record);
+    };
+    chrome.runtime.onMessage.addListener(onPicked);
+    chrome.tabs.sendMessage(tab.id, { action: 'tool.picker.start' }, () => {
+      if (chrome.runtime.lastError) {
+        chrome.runtime.onMessage.removeListener(onPicked);
         btn.classList.remove('active');
         this.showNotification('Cannot inspect this page');
       }
-    } else {
-      // Cancel picker — remove overlay from active tab
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => document.getElementById('__hanzo_picker_overlay')?.remove(),
-          });
-        }
-      } catch {}
-    }
+    });
   }
 
   showInspectorResult(info: any) {
@@ -1034,6 +923,14 @@ class HanzoSidebar {
     // Size
     if (info.rect) {
       lines.push(copyLine('', `${info.rect.w}x${info.rect.h} @ (${info.rect.x}, ${info.rect.y})`, 'element-size'));
+    }
+
+    // Where it lives in source: what the agent opens to edit it
+    if (info.source?.at) {
+      lines.push(copyLine('Source: ', info.source.at));
+    }
+    if (info.components?.length) {
+      lines.push(copyLine('Components: ', info.components.join(' < ')));
     }
 
     // Selector

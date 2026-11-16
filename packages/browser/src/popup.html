@@ -142,7 +142,7 @@
     <nav class="popup-nav-tabs">
       <button type="button" class="nav-tab-btn active" data-tab="tab-chat">Chat &amp; Search</button>
       <button type="button" class="nav-tab-btn" data-tab="tab-accounts">Accounts &amp; Usage</button>
-      <button type="button" class="nav-tab-btn" data-tab="tab-bridges">Bridges &amp; Tools</button>
+      <button type="button" class="nav-tab-btn" data-tab="tab-bridges">Bridges</button>
     </nav>
 
     <!-- Main Container Body -->
@@ -156,6 +156,49 @@
           <span class="context-tag">Page</span>
           <span id="tab-context-title" class="context-title">Detecting active page…</span>
           <button id="toggle-context-btn" class="context-toggle" title="Toggle page context" type="button">Active</button>
+        </div>
+
+        <!-- Page tools: first tab, one click from opening the popup -->
+        <div class="tools-section">
+          <span class="setting-title">Tools</span>
+          <div class="tools-btn-grid">
+            <button type="button" class="tool-btn" id="tool-picker" title="Pick an element; the agent sees it and its source (browser action=inspected)">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M3 3l4 10 2-4 4-2L3 3z"/>
+              </svg>
+              <span>Inspect</span>
+            </button>
+            <button type="button" class="tool-btn" id="tool-screenshot" title="Capture active tab">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="8" cy="8" r="2.5"/>
+              </svg>
+              <span>Screenshot</span>
+            </button>
+            <button type="button" class="tool-btn" id="tool-pageinfo" title="Copy page metadata">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="8" cy="8" r="6"/><line x1="8" y1="7" x2="8" y2="11"/><line x1="8" y1="5" x2="8.01" y2="5"/>
+              </svg>
+              <span>Page Info</span>
+            </button>
+            <button type="button" class="tool-btn" id="tool-accessibility" title="Run accessibility audit">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="8" cy="4" r="2"/><path d="M4 7h8M8 7v7M5 14l3-3 3 3"/>
+              </svg>
+              <span>A11y Audit</span>
+            </button>
+            <button type="button" class="tool-btn" id="tool-performance" title="Run performance audit">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M8 2v4l3 2"/><circle cx="8" cy="8" r="6"/>
+              </svg>
+              <span>Performance</span>
+            </button>
+            <button type="button" class="tool-btn" id="tool-console" title="Open JS eval prompt">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+                <polyline points="4 6 8 10 4 14"/><line x1="10" y1="14" x2="14" y2="14"/>
+              </svg>
+              <span>Console</span>
+            </button>
+          </div>
         </div>
 
         <!-- Omnibox Form (Chat & Search) -->
@@ -323,7 +366,7 @@
         </div>
       </div>
 
-      <!-- Tab 3: Bridges & Tools View -->
+      <!-- Tab 3: Bridges View -->
       <div id="tab-bridges" class="tab-pane hidden">
         <div class="pane-header">
           <span class="pane-title">Bridge Runtime Status</span>
@@ -373,49 +416,6 @@
             <button id="zap-pair-btn" class="action-submit primary" type="button">Pair</button>
           </div>
           <span id="zap-pair-error" class="status-detail error-text"></span>
-        </div>
-
-        <!-- Developer Quick Tools -->
-        <div class="tools-section">
-          <span class="setting-title">Developer Quick Tools</span>
-          <div class="tools-btn-grid">
-            <button type="button" class="tool-btn" id="tool-picker" title="Inspect element on page">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M3 3l4 10 2-4 4-2L3 3z"/>
-              </svg>
-              <span>Pick Element</span>
-            </button>
-            <button type="button" class="tool-btn" id="tool-screenshot" title="Capture active tab">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="8" cy="8" r="2.5"/>
-              </svg>
-              <span>Screenshot</span>
-            </button>
-            <button type="button" class="tool-btn" id="tool-pageinfo" title="Copy page metadata">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <circle cx="8" cy="8" r="6"/><line x1="8" y1="7" x2="8" y2="11"/><line x1="8" y1="5" x2="8.01" y2="5"/>
-              </svg>
-              <span>Page Info</span>
-            </button>
-            <button type="button" class="tool-btn" id="tool-accessibility" title="Run accessibility audit">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <circle cx="8" cy="4" r="2"/><path d="M4 7h8M8 7v7M5 14l3-3 3 3"/>
-              </svg>
-              <span>A11y Audit</span>
-            </button>
-            <button type="button" class="tool-btn" id="tool-performance" title="Run performance audit">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M8 2v4l3 2"/><circle cx="8" cy="8" r="6"/>
-              </svg>
-              <span>Performance</span>
-            </button>
-            <button type="button" class="tool-btn" id="tool-console" title="Open JS eval prompt">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
-                <polyline points="4 6 8 10 4 14"/><line x1="10" y1="14" x2="14" y2="14"/>
-              </svg>
-              <span>Console</span>
-            </button>
-          </div>
         </div>
 
         <!-- Feature Capabilities -->

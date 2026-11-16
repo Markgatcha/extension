@@ -30,6 +30,7 @@ import { BrowserControl } from './browser-control';
 import { WebGPUAI } from './webgpu-ai';
 import { getCDPBridge, CDPBridge } from './browser-dispatch';
 import { driveMessage } from './shared/drive.js';
+import { recordPick } from './shared/inspect.js';
 import { LASTPASS_METHODS, handleLastPass } from './shared/lastpass.js';
 import { defaultWebMCPTracker, injectWebMCPOnCommitted } from './shared/webmcp.js';
 import { unwrapEvaluateResult } from './shared/tab-id.js';
@@ -1012,12 +1013,20 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
     }
 
     // --- Content script element selection (routed from content script) ---
-    case 'elementSelected':
+    case 'elementSelected': {
+      // Describe the pick from the page's MAIN world and keep it for
+      // `hanzo.inspected`, so an agent can act on "what I clicked".
+      const pickTab = sender.tab?.id;
+      const record = pickTab && request.token
+        ? await recordPick(chrome, pickTab, String(request.token), request.data || {}).catch(() => null)
+        : null;
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(request.data));
+        ws.send(JSON.stringify(record?.source ? { ...request.data, source: record.source } : request.data));
       }
-      sendResponse({ success: true });
+      if (record) chrome.runtime.sendMessage({ action: 'inspector.picked', record }).catch(() => {});
+      sendResponse({ success: true, record });
       break;
+    }
 
     // --- Page Monitor: Console & Network Capture ---
     case 'monitor.start': {

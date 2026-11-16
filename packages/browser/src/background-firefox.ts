@@ -40,6 +40,7 @@ import {
 import { parseTabId, unwrapEvaluateResult } from './shared/tab-id.js';
 import { detail, shrink } from './shared/shrink.js';
 import { DRIVE, drive, driveMessage } from './shared/drive.js';
+import { recordPick } from './shared/inspect.js';
 import { LASTPASS_METHODS, handleLastPass } from './shared/lastpass.js';
 import {
   WEBMCP_METHODS,
@@ -2508,9 +2509,15 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
       // =======================================================================
       // Element Selected (content script overlay picker)
       // =======================================================================
-      case 'elementSelected':
-        sendResponse({ success: true });
+      case 'elementSelected': {
+        const pickTab = sender?.tab?.id;
+        const record = pickTab && request.token
+          ? await recordPick(browser, pickTab, String(request.token), request.data || {}).catch(() => null)
+          : null;
+        if (record) browser.runtime.sendMessage({ action: 'inspector.picked', record }).catch(() => {});
+        sendResponse({ success: true, record });
         break;
+      }
 
       // =======================================================================
       // Page Overlay (forwarded to content script)
@@ -2585,10 +2592,6 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
 
       case 'usage.metrics':
         sendResponse({ success: true, metrics: { chatRequests: 0, inputTokens: 0, outputTokens: 0, dedupeHits: 0, canceledRequests: 0 } });
-        break;
-
-      case 'inspector.pickResult':
-        sendResponse({ success: true });
         break;
 
       // =======================================================================

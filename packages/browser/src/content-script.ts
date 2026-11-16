@@ -136,19 +136,14 @@ class HanzoContentScript {
       e.stopPropagation();
 
       const element = e.target as HTMLElement;
-      const source = this.extractSourceLocation(element);
-      const domPath = this.getDOMPath(element);
-
       const event: ElementSelectedEvent = {
         event: 'elementSelected',
         framework: this.detectFramework(),
-        domPath,
-        source,
+        domPath: this.getDOMPath(element),
+        source: this.extractSourceLocation(element),
         fallbackId: element.getAttribute('data-hanzo-id') || undefined,
       };
-
-      // Route through background script (works with both ZAP and legacy MCP)
-      chrome.runtime.sendMessage({ action: 'elementSelected', data: event });
+      reportPick(element, event);
     });
   }
 
@@ -1747,6 +1742,46 @@ class HanzoPageOverlay {
 const pageOverlay = new HanzoPageOverlay();
 
 // =============================================================================
+// Report a pick: the one path every inspector takes to the agent
+// =============================================================================
+
+/**
+ * Stamp the element so the background can find it from the page's MAIN world
+ * (where React/Vue/Svelte keep their source metadata), send it, and show where
+ * it resolved. The background keeps the record for `browser action=inspected`.
+ */
+function reportPick(el: HTMLElement, data: Record<string, unknown>) {
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  el.setAttribute('data-hanzo-picked', token);
+  const rect = el.getBoundingClientRect();
+  chrome.runtime.sendMessage({ action: 'elementSelected', token, data }, (res: any) => {
+    void chrome.runtime.lastError;
+    const rec = res?.record;
+    const where = rec?.source?.at || rec?.components?.[0] || rec?.selector || el.tagName.toLowerCase();
+    const summary = [
+      `Picked ${where}`,
+      rec?.selector ? `Selector: ${rec.selector}` : '',
+      rec?.source?.at ? `Source: ${rec.source.at}` : '',
+      rec?.components?.length ? `Components: ${rec.components.join(' < ')}` : '',
+      rec?.text ? `Text: "${String(rec.text).slice(0, 80)}"` : '',
+    ].filter(Boolean).join('\n');
+    navigator.clipboard.writeText(summary).catch(() => {});
+    pickToast(rec ? `Sent to agent · ${where}` : 'Picked (agent not reachable)', rect);
+  });
+}
+
+function pickToast(text: string, rect: DOMRect) {
+  document.getElementById('hanzo-pick-toast')?.remove();
+  const t = document.createElement('div');
+  t.id = 'hanzo-pick-toast';
+  t.textContent = text;
+  const top = rect.bottom + 8 < window.innerHeight - 32 ? rect.bottom + 8 : Math.max(8, rect.top - 36);
+  t.style.cssText = `position:fixed;z-index:2147483647;left:${Math.max(8, Math.min(rect.left, window.innerWidth - 420))}px;top:${top}px;max-width:400px;background:#000;color:#fff;font:12px/1.4 Zen Mono,Menlo,monospace;padding:6px 10px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.4);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+  document.documentElement.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
+}
+
+// =============================================================================
 // Element Picker Tool — pick any element, copy its CSS selector
 // =============================================================================
 
@@ -1796,112 +1831,6 @@ const elementPicker = (() => {
     document.body.appendChild(label);
   }
 
-  // Where does this pixel come from in SOURCE? That is the question an editing
-  // agent needs answered, and a CSS selector cannot answer it — selectors name a
-  // position in the rendered tree, which changes the moment anyone reorders a
-  // wrapper.
-  //
-  // Two ways to get a real answer, tried in order of trustworthiness:
-  //
-  //   1. The gui compiler's annotations. It writes data-at (file:line), data-is
-  //      (the component) and data-in (its call site) during the same AST pass
-  //      that flattens the tree, so the name refers to the component that
-  //      actually rendered. Present on any @hanzo/gui or @hanzo/ui surface.
-  //   2. React's own dev fiber. Any React app in development carries
-  //      _debugSource on the fiber node — fileName/lineNumber straight from the
-  //      JSX transform. This is how a site we did not build still resolves.
-  //
-  // Both are dev-only by construction: a production bundle has neither, and
-  // that is correct — there is no source on the other end to edit.
-  function sourceOf(el: Element | null): Record<string, string | number> | undefined {
-    if (!el) return undefined;
-
-    const tagged = el.closest?.('[data-at]');
-    if (tagged) {
-      return {
-        at: tagged.getAttribute('data-at') || '',
-        component: tagged.getAttribute('data-is') || '',
-        usedIn: tagged.getAttribute('data-in') || '',
-        via: 'gui',
-      };
-    }
-
-    // React stores the fiber under a per-render key, so it has to be found by
-    // prefix rather than by name.
-    const key = Object.keys(el).find(
-      (k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
-    );
-    let fiber: any = key ? (el as any)[key] : null;
-    // The clicked leaf is usually a host element; the source lives on the
-    // nearest ancestor fiber that came from JSX.
-    while (fiber) {
-      const src = fiber._debugSource || fiber._debugInfo?.[0];
-      if (src?.fileName) {
-        return {
-          at: `${String(src.fileName).split('/').pop()}:${src.lineNumber ?? 0}`,
-          file: src.fileName,
-          line: src.lineNumber ?? 0,
-          component:
-            typeof fiber.type === 'function'
-              ? fiber.type.displayName || fiber.type.name || ''
-              : String(fiber.type || ''),
-          via: 'react',
-        };
-      }
-      fiber = fiber.return;
-    }
-
-    // Svelte's dev compiler attaches __svelte_meta.loc = {file, line, column}
-    // to the DOM node itself — the most direct of the three, no walk needed
-    // beyond finding the nearest annotated ancestor.
-    let sv: any = el;
-    while (sv) {
-      const loc = sv.__svelte_meta?.loc;
-      if (loc?.file) {
-        return {
-          at: `${String(loc.file).split('/').pop()}:${loc.line ?? 0}`,
-          file: loc.file,
-          line: loc.line ?? 0,
-          via: 'svelte',
-        };
-      }
-      sv = sv.parentElement;
-    }
-
-    // Vue exposes the component instance on the element (v3: __vueParentComponent,
-    // v2: __vue__). In dev the component's own options carry __file.
-    let ve: any = el;
-    while (ve) {
-      const inst = ve.__vueParentComponent || ve.__vue__;
-      const file = inst?.type?.__file || inst?.$options?.__file;
-      if (file) {
-        return {
-          at: String(file).split('/').pop() || String(file),
-          file,
-          component: inst?.type?.name || inst?.$options?.name || '',
-          via: 'vue',
-        };
-      }
-      ve = ve.parentElement;
-    }
-
-    // Plain HTML: nothing compiled it, so there is nothing to resolve — and
-    // nothing to resolve TO. The document IS the source, so the served URL plus
-    // a selector is already an exact edit target, which is the same answer the
-    // frameworks above work so hard to reconstruct.
-    //
-    // Returned rather than left undefined so a caller can tell "this page has
-    // no build step" (editable, act on the selector) from "this is a production
-    // bundle" (not editable, there is no source on the other end). Those need
-    // different behaviour and an absent field conflates them.
-    return {
-      at: location.pathname,
-      file: location.href,
-      selector: getSelector(el),
-      via: 'dom',
-    };
-  }
-
   function onMove(e: MouseEvent) {
     if (!active) return;
     const target = e.target as HTMLElement;
@@ -1933,26 +1862,9 @@ const elementPicker = (() => {
     const el = hoveredEl || e.target as HTMLElement;
     if (!el) return;
 
-    const selector = getSelector(el);
-    const fullPath = getFullPath(el);
-    const tag = el.tagName.toLowerCase();
-    const text = (el.textContent || '').trim().slice(0, 80);
-    const rect = el.getBoundingClientRect();
-
-    const info = [
-      `Selector: ${selector}`,
-      `Path: ${fullPath}`,
-      `Tag: ${tag}`,
-      `Size: ${Math.round(rect.width)}x${Math.round(rect.height)}`,
-      el.id ? `ID: ${el.id}` : '',
-      el.className ? `Classes: ${el.className}` : '',
-      text ? `Text: "${text}"` : '',
-    ].filter(Boolean).join('\n');
-
-    navigator.clipboard.writeText(info).catch(() => {});
-    // Also send to background for MCP tools
-    chrome.runtime.sendMessage({ action: 'elementSelected', data: { selector, fullPath, tag, text, source: sourceOf(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } } });
+    // Stop first so the toast and outline are not the picker's own.
     stop();
+    reportPick(el, { selector: getSelector(el), path: getFullPath(el) });
   }
 
   function onKey(e: KeyboardEvent) {

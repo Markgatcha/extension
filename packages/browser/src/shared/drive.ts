@@ -13,10 +13,12 @@
  *   hanzo.read      {outline, filter}                       page as markdown
  *   hanzo.wait      {selector | text, state, timeout}       or, with neither, load
  *   hanzo.annotate  {maxWidth, quality}                     screenshot with [N] = @eN
+ *   hanzo.inspected                                         the element last picked with the inspector, and its source
  */
 
 import { detail, shrink, toBase64, toBlob } from './shrink.js';
 import { discoverTabWebMCP, webmcpCall, webmcpList } from './webmcp.js';
+import { inspected } from './inspect.js';
 
 export const DRIVE = new Set([
   'hanzo.navigate',
@@ -25,6 +27,7 @@ export const DRIVE = new Set([
   'hanzo.read',
   'hanzo.wait',
   'hanzo.annotate',
+  'hanzo.inspected',
   'hanzo.webmcp.list',
   'hanzo.webmcp.call',
 ]);
@@ -80,6 +83,8 @@ export async function drive(api: any, tabId: number, method: string, p: Params):
       return wait(api, tabId, p);
     case 'hanzo.annotate':
       return annotate(api, tabId, p);
+    case 'hanzo.inspected':
+      return inspected(api, tabId) as Promise<Result>;
     case 'hanzo.webmcp.list':
       return webmcpList(api, tabId, p);
     case 'hanzo.webmcp.call':
