@@ -43,7 +43,7 @@ test.describe('Popup Tools', () => {
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.waitForTimeout(500);
 
-    const grid = page.locator('.tools-grid');
+    const grid = page.locator('.tools-btn-grid');
     await expect(grid).toBeAttached();
   });
 

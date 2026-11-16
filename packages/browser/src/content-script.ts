@@ -129,7 +129,9 @@ class HanzoContentScript {
   }
 
   private setupClickHandler() {
-    document.addEventListener('click', (e) => {
+    // macOS turns Ctrl-click into a right-click: the page gets `contextmenu`
+    // and never `click`. The default shortcut is Ctrl, so both are the pick.
+    const onPick = (e: MouseEvent) => {
       if (!matchesShortcut(e, this.inspectShortcut)) return;
 
       e.preventDefault();
@@ -144,7 +146,9 @@ class HanzoContentScript {
         fallbackId: element.getAttribute('data-hanzo-id') || undefined,
       };
       reportPick(element, event);
-    });
+    };
+    document.addEventListener('click', onPick, true);
+    document.addEventListener('contextmenu', onPick, true);
   }
 
   private setupMessageHandlers() {
@@ -1765,8 +1769,9 @@ function reportPick(el: HTMLElement, data: Record<string, unknown>) {
       rec?.components?.length ? `Components: ${rec.components.join(' < ')}` : '',
       rec?.text ? `Text: "${String(rec.text).slice(0, 80)}"` : '',
     ].filter(Boolean).join('\n');
-    navigator.clipboard.writeText(summary).catch(() => {});
     pickToast(rec ? `Sent to agent · ${where}` : 'Picked (agent not reachable)', rect);
+    // No clipboard outside a secure context (plain-http dev hosts).
+    navigator.clipboard?.writeText(summary).catch(() => {});
   });
 }
 

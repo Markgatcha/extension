@@ -1020,9 +1020,6 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
       const record = pickTab && request.token
         ? await recordPick(chrome, pickTab, String(request.token), request.data || {}).catch(() => null)
         : null;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(record?.source ? { ...request.data, source: record.source } : request.data));
-      }
       if (record) chrome.runtime.sendMessage({ action: 'inspector.picked', record }).catch(() => {});
       sendResponse({ success: true, record });
       break;
