@@ -36,7 +36,9 @@ const BUDGETS = {
   // (shared/vault.ts + shared/kms.ts), LastPass vault/icon automation
   // (shared/lastpass.ts), WebMCP discovery, delta caps, detached jobs &
   // provenance boundaries (shared/webmcp.ts), and MAIN-world React input sync.
-  'background.js': 266,
+  // 268.1 — RAISED from 266 for the inspector's MAIN-world source resolution
+  // (shared/inspect.ts: React/Vue/Svelte/Astro file:line for hanzo.inspected).
+  'background.js': 270,
   'content-script.js': 62, // 57.0
   // 29.7 — RAISED from 29 (28.1) for closed Shadow-DOM `>>>` selector piercing
   // (`deepQuerySelector`), ShadowRoot/SVG hit-testing (`sameHitTarget`), and
