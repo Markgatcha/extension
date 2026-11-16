@@ -49,6 +49,37 @@ function whichBinary(names: string[]): string | null {
   return null;
 }
 
+// The Chromium Playwright installs (`playwright install chromium`), newest
+// revision first: PLAYWRIGHT_BROWSERS_PATH, else Playwright's default cache.
+// `make check` installs it under .cache/ms-playwright on runners that carry no
+// system Chrome.
+function playwrightChromium(): string | null {
+  const roots = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
+    path.join(os.homedir(), '.cache', 'ms-playwright'),
+    path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright'),
+  ].filter((r): r is string => !!r && r !== '0' && fs.existsSync(r));
+  const inside = [
+    'chrome-linux64/chrome',
+    'chrome-linux/chrome',
+    'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+    'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+    'chrome-mac/Chromium.app/Contents/MacOS/Chromium',
+  ];
+  for (const root of roots) {
+    const revisions = fs.readdirSync(root)
+      .filter((d) => /^chromium-\d+$/.test(d))
+      .sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)));
+    for (const rev of revisions) {
+      for (const rel of inside) {
+        const bin = path.join(root, rev, rel);
+        if (fs.existsSync(bin)) return bin;
+      }
+    }
+  }
+  return null;
+}
+
 export function findEngineBinary(engine: Exclude<BrowserEngine, 'extension'> = 'chrome', explicit?: string): string {
   if (explicit && fs.existsSync(explicit)) return explicit;
 
@@ -101,7 +132,10 @@ export function findEngineBinary(engine: Exclude<BrowserEngine, 'extension'> = '
   const fromPath = whichBinary(['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser']);
   if (fromPath) return fromPath;
 
-  throw new Error('No Chrome or Chromium binary found. Set HANZO_BROWSER_BIN.');
+  const playwright = playwrightChromium();
+  if (playwright) return playwright;
+
+  throw new Error('No Chrome or Chromium binary found. Set HANZO_BROWSER_BIN, or run `playwright install chromium`.');
 }
 
 export function shouldEnableWebMCP(opts?: { webmcp?: boolean; env?: Record<string, string | undefined> }): boolean {
