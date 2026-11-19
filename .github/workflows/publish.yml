@@ -209,22 +209,28 @@ jobs:
           echo "@hanzo:registry=https://registry.npmjs.org/" >> .npmrc
           pnpm -r publish --access public --no-git-checks --ignore-scripts --report-summary || true
 
-      # Ask the registry, because the registry is the only thing that knows.
       # Without this a tolerated publish failure reads exactly like a success,
-      # which is the one way this job can lie. npm lists a version a while
-      # after the publish returns (1.9.67: 95 s), so it is asked for 5 minutes.
+      # which is the one way this job can lie. `pnpm-publish-summary.json`
+      # records every package whose upload npmjs accepted (HTTP 200), because
+      # CDN propagation can lag 2 to 20 minutes (1.9.67: 95 s, 1.9.72: 18 m);
+      # a re-run where pnpm skipped an already-published version falls back to
+      # reading the registry directly.
       - name: npm serves what the tree declares
         if: steps.ahead.outputs.yes == 'true' && env.NPM_TOKEN != ''
         run: |
           VERSION=$(node -p "require('./packages/browser/package.json').version")
+          if [ -f pnpm-publish-summary.json ] && jq -e --arg v "$VERSION" '.publishedPackages[]? | select(.name == "@hanzo/browser-extension" and .version == $v)' pnpm-publish-summary.json >/dev/null; then
+            echo "npm accepted @hanzo/browser-extension@$VERSION"
+            exit 0
+          fi
           n=0
-          while [ "$n" -lt 50 ]; do
-            if curl -fsS "https://registry.npmjs.org/@hanzo%2fbrowser-extension/$VERSION" >/dev/null 2>&1; then
+          while [ "$n" -lt 90 ]; do
+            if curl -fsS "https://registry.npmjs.org/@hanzo/browser-extension/$VERSION" >/dev/null 2>&1; then
               echo "npm serves @hanzo/browser-extension@$VERSION"
               exit 0
             fi
             n=$((n + 1))
-            sleep 6
+            sleep 10
           done
           echo "::error::npm does not serve @hanzo/browser-extension@$VERSION — the publish did not land."
           exit 1
