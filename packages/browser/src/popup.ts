@@ -37,18 +37,21 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch { /* manifest unavailable in some contexts */ }
   }
 
-  // Model Picker Dropdown
+  // Model Picker Dropdown (Enso / Zen 6 — zero zen4/zen5/qwen2)
   const modelSelectBtn = document.getElementById('model-select-btn');
   const modelBadge = document.getElementById('model-badge');
   const modelDropdown = document.getElementById('model-dropdown');
 
   const MODEL_LABELS: Record<string, string> = {
-    'auto': 'Auto',
-    'zen5': 'Zen5',
-    'zen5-flash': 'Zen5 Flash',
-    'zen5-coder': 'Zen5 Coder',
     'enso': 'Enso',
-    'chatgpt-web': 'ChatGPT Plus',
+    'zen6': 'Zen 6',
+    'zen6-flash': 'Zen 6 Flash',
+    'zen6-coder': 'Zen 6 Coder',
+    'zen6-max': 'Zen 6 Max',
+    'zen-vl': 'Zen VL',
+    'kai': 'Kai',
+    'auto': 'Auto',
+    'chatgpt-web': 'ChatGPT Web',
     'claude-web': 'Claude Web',
     'hanzo-spark': 'Spark GB10',
     'hanzo-evo': 'Evo Halo',
@@ -56,20 +59,87 @@ document.addEventListener('DOMContentLoaded', () => {
     'webgpu': 'WebGPU',
   };
 
+  const normalizeModelId = (id?: string): string => {
+    const raw = (id || '').trim();
+    if (!raw || /^(zen[45]|qwen2)/i.test(raw)) return 'enso';
+    return raw;
+  };
+
   function updateSelectedModel(modelId: string) {
-    chrome.storage.local.set({ hanzo_selected_model: modelId });
+    const next = normalizeModelId(modelId);
+    chrome.storage.local.set({ hanzo_selected_model: next });
     if (modelBadge) {
-      modelBadge.textContent = MODEL_LABELS[modelId] || modelId;
+      modelBadge.textContent = MODEL_LABELS[next] || next;
     }
     document.querySelectorAll('.model-item').forEach((item) => {
-      const active = item.getAttribute('data-model') === modelId;
+      const active = item.getAttribute('data-model') === next;
       item.classList.toggle('active', active);
     });
   }
 
   chrome.storage.local.get(['hanzo_selected_model'], (res) => {
-    const m = res.hanzo_selected_model || 'auto';
-    updateSelectedModel(m);
+    updateSelectedModel(res.hanzo_selected_model || 'enso');
+  });
+
+  // Quiet Header: hanzo.id + X-Org-Id switcher & New Thread
+  const headerZapDot = document.getElementById('header-zap-dot');
+  const orgPillBtn = document.getElementById('org-pill-btn');
+  const orgPillLabel = document.getElementById('org-pill-label');
+  const orgDropdown = document.getElementById('org-dropdown');
+  const popupNewThreadBtn = document.getElementById('popup-new-thread-btn');
+  let isAuthenticated = false;
+  let activeOrgId: string | null = null;
+  let orgList: Array<{ id: string; name: string; displayName?: string }> = [];
+
+  function renderOrgDropdown() {
+    if (orgPillLabel) {
+      orgPillLabel.textContent = isAuthenticated
+        ? (activeOrgId ? `hanzo.id · ${activeOrgId}` : 'hanzo.id')
+        : 'hanzo.id';
+    }
+    if (!orgDropdown) return;
+    orgDropdown.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'org-dropdown-title';
+    title.textContent = 'X-Org-Id';
+    orgDropdown.appendChild(title);
+    const items = orgList.length ? orgList : [{ id: activeOrgId || 'hanzo', name: activeOrgId || 'hanzo' }];
+    for (const org of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `org-dropdown-item${org.id === activeOrgId ? ' active' : ''}`;
+      btn.textContent = org.displayName || org.name || org.id;
+      btn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'org.switch', orgId: org.id }, () => {
+          void chrome.runtime.lastError;
+          activeOrgId = org.id;
+          renderOrgDropdown();
+          orgDropdown.classList.add('hidden');
+        });
+      });
+      orgDropdown.appendChild(btn);
+    }
+  }
+
+  function loadOrgs() {
+    chrome.runtime.sendMessage({ action: 'org.list' }, (resp) => {
+      if (chrome.runtime.lastError || !resp?.success) return;
+      orgList = Array.isArray(resp.orgs) ? resp.orgs : [];
+      activeOrgId = resp.activeOrgId || orgList[0]?.id || null;
+      renderOrgDropdown();
+    });
+  }
+
+  orgPillBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!isAuthenticated) {
+      chrome.runtime.sendMessage({ action: 'auth.login' }, () => {
+        void chrome.runtime.lastError;
+        checkAuth();
+      });
+      return;
+    }
+    orgDropdown?.classList.toggle('hidden');
   });
 
   modelSelectBtn?.addEventListener('click', (e) => {
@@ -99,6 +169,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!modelSelectBtn?.contains(e.target as Node) && !modelDropdown?.contains(e.target as Node)) {
       modelDropdown?.classList.add('hidden');
       modelSelectBtn?.classList.remove('open');
+    }
+    if (!orgPillBtn?.contains(e.target as Node) && !orgDropdown?.contains(e.target as Node)) {
+      orgDropdown?.classList.add('hidden');
     }
   });
 
@@ -186,6 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ action: 'auth.status' }, (response) => {
       if (chrome.runtime.lastError) return;
       if (response?.success && response.authenticated) {
+        isAuthenticated = true;
         loginSection.classList.add('hidden');
         userInfoSection?.classList.remove('hidden');
         if (response.user) {
@@ -196,7 +270,12 @@ document.addEventListener('DOMContentLoaded', () => {
           name.textContent = response.user.name || response.user.displayName || 'Hanzo User';
           email.textContent = response.user.email || '';
         }
+        loadOrgs();
       } else {
+        isAuthenticated = false;
+        activeOrgId = null;
+        orgList = [];
+        renderOrgDropdown();
         loginSection.classList.remove('hidden');
         userInfoSection?.classList.add('hidden');
       }
@@ -242,6 +321,19 @@ document.addEventListener('DOMContentLoaded', () => {
   let pageContextActive = true;
   const tabContextTitle = document.getElementById('tab-context-title');
   const toggleContextBtn = document.getElementById('toggle-context-btn');
+  const composerAttachBtn = document.getElementById('composer-attach-btn');
+  const askBtn = document.getElementById('ask-btn') as HTMLButtonElement | null;
+  const voiceMicBtn = document.getElementById('voice-mic-btn');
+
+  function syncPageContextUi() {
+    if (toggleContextBtn) {
+      toggleContextBtn.textContent = pageContextActive ? 'Active' : 'Off';
+      toggleContextBtn.style.opacity = pageContextActive ? '1' : '0.5';
+    }
+    const chip = document.getElementById('tab-context-chip');
+    if (chip) chip.style.opacity = pageContextActive ? '1' : '0.55';
+    composerAttachBtn?.setAttribute('data-active', pageContextActive ? 'true' : 'false');
+  }
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
@@ -255,10 +347,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   toggleContextBtn?.addEventListener('click', () => {
     pageContextActive = !pageContextActive;
-    toggleContextBtn.textContent = pageContextActive ? 'Active' : 'Off';
-    toggleContextBtn.style.opacity = pageContextActive ? '1' : '0.5';
-    const chip = document.getElementById('tab-context-chip');
-    if (chip) chip.style.opacity = pageContextActive ? '1' : '0.6';
+    syncPageContextUi();
+  });
+
+  composerAttachBtn?.addEventListener('click', () => {
+    pageContextActive = !pageContextActive;
+    syncPageContextUi();
   });
 
   const searchForm = document.getElementById('search-form') as HTMLFormElement | null;
@@ -269,6 +363,69 @@ document.addEventListener('DOMContentLoaded', () => {
   const copyInlineBtn = document.getElementById('copy-inline-btn');
   const continueChatBtn = document.getElementById('continue-chat-btn');
   const answerHeaderText = document.getElementById('answer-header-text');
+
+  function resizeComposer() {
+    if (!searchInput) return;
+    if (searchInput instanceof HTMLTextAreaElement) {
+      searchInput.style.height = 'auto';
+      searchInput.style.height = `${Math.min(searchInput.scrollHeight, 140)}px`;
+    }
+    if (askBtn) {
+      askBtn.disabled = !searchInput.value.trim();
+    }
+  }
+  searchInput?.addEventListener('input', resizeComposer);
+  resizeComposer();
+
+  popupNewThreadBtn?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    resizeComposer();
+    inlineAnswer?.classList.add('hidden');
+    if (inlineAnswerContent) inlineAnswerContent.textContent = '';
+    settingsSection?.classList.add('hidden');
+    mainSection?.classList.remove('hidden');
+    searchInput?.focus();
+  });
+
+  // Optional browser speech dictation inside composer
+  const SpeechCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (SpeechCtor && voiceMicBtn) {
+    voiceMicBtn.classList.remove('hidden');
+    let rec: any = null;
+    let listening = false;
+    const stopRec = () => {
+      listening = false;
+      voiceMicBtn.setAttribute('data-listening', 'false');
+      try { rec?.stop(); } catch {}
+      rec = null;
+    };
+    voiceMicBtn.addEventListener('click', () => {
+      if (listening) { stopRec(); return; }
+      try {
+        rec = new SpeechCtor();
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.lang = navigator.language || 'en-US';
+        rec.onresult = (ev: any) => {
+          const text = Array.from(ev?.results ?? [])
+            .map((r: any) => r?.[0]?.transcript ?? '')
+            .join(' ')
+            .trim();
+          if (text && searchInput) {
+            searchInput.value = searchInput.value.trim() ? `${searchInput.value.trimEnd()} ${text}` : text;
+            resizeComposer();
+          }
+        };
+        rec.onerror = stopRec;
+        rec.onend = stopRec;
+        rec.start();
+        listening = true;
+        voiceMicBtn.setAttribute('data-listening', 'true');
+      } catch {
+        stopRec();
+      }
+    });
+  }
 
   function openSearch(query: string) {
     const target = query
@@ -297,7 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const selectedModel = await new Promise<string>((resolve) => {
         chrome.storage.local.get(['hanzo_selected_model'], (res) => {
-          resolve(res.hanzo_selected_model || 'auto');
+          resolve(normalizeModelId(res.hanzo_selected_model || 'enso'));
         });
       });
 
@@ -305,6 +462,7 @@ document.addEventListener('DOMContentLoaded', () => {
         {
           action: 'chat.complete',
           model: selectedModel,
+          orgId: activeOrgId || undefined,
           messages: [{ role: 'user', content: fullPrompt }],
         },
         (response) => {
@@ -345,11 +503,89 @@ document.addEventListener('DOMContentLoaded', () => {
     if (prompt) handleAskAi(prompt);
   });
 
-  searchInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
+  searchInput?.addEventListener('keydown', (e: Event) => {
+    const ke = e as KeyboardEvent;
+    // IME-safe Enter submit + Shift+Enter newline + Cmd/Ctrl+Enter force submit
+    const imeClaimed = ke.isComposing || ke.key === 'Process' || ke.keyCode === 229;
+    if (ke.key === 'Enter' && !imeClaimed && (ke.metaKey || ke.ctrlKey || (!ke.shiftKey && !ke.altKey))) {
+      ke.preventDefault();
       const prompt = searchInput.value.trim();
       if (prompt) handleAskAi(prompt);
+    }
+  });
+
+  // Command / Search Palette (⌘K / Ctrl+K)
+  const cmdPalette = document.getElementById('popup-cmd-palette');
+  const cmdInput = document.getElementById('cmd-palette-input') as HTMLInputElement | null;
+  const cmdList = document.getElementById('cmd-palette-list');
+  const commands: Array<{ label: string; hint?: string; run: () => void }> = [
+    { label: 'New thread', hint: 'Clear', run: () => popupNewThreadBtn?.click() },
+    { label: 'Open Side Panel', hint: 'Panel', run: () => openPanel?.click() },
+    { label: 'Open New Tab Answer Engine', hint: 'Tab', run: () => openSearch(searchInput?.value.trim() || '') },
+    { label: 'Toggle Page Context', hint: '+', run: () => { pageContextActive = !pageContextActive; syncPageContextUi(); } },
+    { label: 'Inspect Element', hint: 'Tool', run: () => document.getElementById('tool-picker')?.click() },
+    { label: 'Capture Screenshot', hint: 'Tool', run: () => document.getElementById('tool-screenshot')?.click() },
+    { label: 'Settings', hint: 'Prefs', run: () => openSettings?.click() },
+  ];
+  let cmdActive = 0;
+
+  function renderCmdList(filter = '') {
+    if (!cmdList) return;
+    const q = filter.trim().toLowerCase();
+    const matches = q ? commands.filter((c) => c.label.toLowerCase().includes(q)) : commands;
+    cmdActive = Math.min(cmdActive, Math.max(0, matches.length - 1));
+    cmdList.innerHTML = '';
+    matches.forEach((cmd, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `cmd-palette-item${idx === cmdActive ? ' active' : ''}`;
+      btn.innerHTML = `<span>${cmd.label}</span>${cmd.hint ? `<span class="cmd-palette-hint">${cmd.hint}</span>` : ''}`;
+      btn.addEventListener('click', () => {
+        closeCmdPalette();
+        cmd.run();
+      });
+      cmdList.appendChild(btn);
+    });
+  }
+
+  function openCmdPalette() {
+    if (!cmdPalette) return;
+    cmdPalette.classList.remove('hidden');
+    if (cmdInput) {
+      cmdInput.value = '';
+      cmdActive = 0;
+      renderCmdList('');
+      cmdInput.focus();
+    }
+  }
+
+  function closeCmdPalette() {
+    cmdPalette?.classList.add('hidden');
+  }
+
+  cmdPalette?.addEventListener('click', (e) => {
+    if (e.target === cmdPalette) closeCmdPalette();
+  });
+
+  cmdInput?.addEventListener('input', () => {
+    cmdActive = 0;
+    renderCmdList(cmdInput.value);
+  });
+
+  cmdInput?.addEventListener('keydown', (e) => {
+    const items = cmdList?.querySelectorAll<HTMLButtonElement>('.cmd-palette-item');
+    if (e.key === 'Escape') { e.preventDefault(); closeCmdPalette(); return; }
+    if (!items?.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); cmdActive = (cmdActive + 1) % items.length; renderCmdList(cmdInput.value); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); cmdActive = (cmdActive - 1 + items.length) % items.length; renderCmdList(cmdInput.value); }
+    else if (e.key === 'Enter') { e.preventDefault(); items[cmdActive]?.click(); }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (cmdPalette?.classList.contains('hidden')) openCmdPalette();
+      else closeCmdPalette();
     }
   });
 
@@ -628,6 +864,10 @@ document.addEventListener('DOMContentLoaded', () => {
           : zap.error === 'refused' ? 'Router refused this browser'
           : 'Connecting…';
         setStatus(zapStatus, zapDetail, zap.connected, text);
+        if (headerZapDot) {
+          headerZapDot.classList.toggle('connected', Boolean(zap.connected));
+          headerZapDot.title = zap.connected ? `ZAP connected (${zap.caps?.length || 0} tools)` : `ZAP: ${text}`;
+        }
         zapPair.hidden = zap.connected || (zap.paired && zap.error !== 'mismatch');
       }
     });

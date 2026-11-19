@@ -8,6 +8,44 @@
 </head>
 <body>
   <div class="sidebar-container">
+    <!-- Quiet Top Header -->
+    <header class="sidebar-header">
+      <div class="header-left">
+        <a href="https://hanzo.ai" target="_blank" rel="noreferrer" class="brand" title="Hanzo">
+          <svg class="logo" viewBox="0 0 67 67" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M22.21 67V44.6369H0V67H22.21Z" fill="currentColor"/>
+            <path d="M66.7038 22.3184H22.2534L0.0878906 44.6367H44.4634L66.7038 22.3184Z" fill="currentColor"/>
+            <path d="M22.21 0H0V22.3184H22.21V0Z" fill="currentColor"/>
+            <path d="M66.7198 0H44.5098V22.3184H66.7198V0Z" fill="currentColor"/>
+            <path d="M66.7198 67V44.6369H44.5098V67H66.7198Z" fill="currentColor"/>
+          </svg>
+        </a>
+        <span id="header-zap-dot" class="header-zap-dot" title="ZAP: Connecting…"></span>
+        <div class="org-pill-wrap">
+          <button type="button" id="header-org-pill" class="org-pill-btn" title="hanzo.id · Active organization (X-Org-Id)">
+            <span id="header-org-label">hanzo.id</span>
+            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div id="header-org-menu" class="org-menu hidden" role="menu"></div>
+        </div>
+      </div>
+      <div class="header-right">
+        <button type="button" id="header-new-thread" class="icon-btn" title="New thread" aria-label="New thread">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" id="header-settings" class="icon-btn" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
     <!-- Tab Bar (always visible) -->
     <nav id="tab-bar" class="tab-bar hidden">
       <button class="tab active" data-tab="chat">Chat</button>
@@ -310,7 +348,7 @@
           <h3>Hanzo Cloud Search & Retrieval</h3>
           <div class="status-row" style="margin-bottom: 8px;">
             <span style="font-size: 12px; color: var(--text-muted, #888);">Backend</span>
-            <span class="status-value mono" style="color: var(--primary, #3b82f6); font-weight: 500;">api.hanzo.ai</span>
+            <span class="status-value mono" style="color: var(--text-primary); font-weight: 500;">api.hanzo.ai</span>
           </div>
           <label class="setting-item">
             <span>Include Tab & Page Context</span>

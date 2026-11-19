@@ -15,10 +15,12 @@ vi.mock('webextension-polyfill', () => ({}));
 const rows = [
   { id: 'aion-labs/aion-2.0', owned_by: 'aion-labs' },
   { id: 'enso', owned_by: 'hanzo' },
-  { id: 'zen5', owned_by: 'zenlm', name: 'Zen5' },
+  { id: 'zen6', owned_by: 'zenlm', name: 'Zen 6' },
+  { id: 'zen5', owned_by: 'zenlm', name: 'Legacy Zen5' },
+  { id: 'qwen2-72b', owned_by: 'zenlm', name: 'Legacy Qwen2' },
   { id: 'zen-embedding', owned_by: 'zenlm' },
   { id: 'zen-guard', owned_by: 'zenlm' },
-  { id: 'zen5-flash', owned_by: 'zenlm' },
+  { id: 'zen6-flash', owned_by: 'zenlm' },
   { id: 'openai/gpt-oss-120b', owned_by: 'openai' },
 ];
 
@@ -56,15 +58,15 @@ describe('page assistant models', () => {
     expect(offered()).toEqual([['auto', 'Auto']]);
     for (const fn of listeners) fn({ action: 'page.overlay.show' }, {}, () => {});
     await vi.waitFor(() => expect(offered().length).toBe(3));
-    expect(offered()).toEqual([['auto', 'Auto'], ['zen5', 'Zen5'], ['zen5-flash', 'zen5-flash']]);
+    expect(offered()).toEqual([['auto', 'Auto'], ['zen6', 'Zen 6'], ['zen6-flash', 'zen6-flash']]);
     expect(select().value).toBe('auto');
   });
 
-  it('sends Auto as the sidebar does: zen5-flash for a short question', async () => {
+  it('sends Auto as the sidebar does: zen6-flash for a short question', async () => {
     const input = document.querySelector<HTMLTextAreaElement>('#hanzo-page-overlay-root [data-role="input"]')!;
     input.value = 'What is this page?';
     document.querySelector<HTMLButtonElement>('#hanzo-page-overlay-root [data-role="send"]')!.click();
     await vi.waitFor(() => expect(sent.some((m) => m.action === 'chat.complete')).toBe(true));
-    expect(sent.find((m) => m.action === 'chat.complete')!.model).toBe('zen5-flash');
+    expect(sent.find((m) => m.action === 'chat.complete')!.model).toBe('zen6-flash');
   });
 });

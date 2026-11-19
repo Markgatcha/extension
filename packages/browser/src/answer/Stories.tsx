@@ -1,5 +1,6 @@
 import React, { type CSSProperties } from 'react';
-import { SizableText, XStack, YStack } from '@hanzo/ui/primitives';
+import { SizableText, YStack } from '@hanzo/ui/primitives';
+import { Grid } from '@hanzo/ui/grid';
 import { measure } from '@hanzo/ui/chat';
 import type { NewsItem } from './news.js';
 
@@ -33,15 +34,14 @@ export function Stories({ items, limit = 6 }: { items: NewsItem[]; limit?: numbe
       <SizableText fontSize={12} lineHeight={16} color="$soft" px={TEXT}>
         Top stories
       </SizableText>
-      <XStack flexWrap="wrap" gap={GAP}>
+      <Grid columns={{ min: 240, max: 2 }} gap={GAP}>
         {items.slice(0, limit).map((n) => (
           <YStack
             key={n.url}
             render="a"
             {...{ href: n.url, target: '_blank', rel: 'noreferrer' }}
             data-slot="story"
-            width={`calc(50% - ${GAP / 2}px)`}
-            $max-sm={{ width: '100%' }}
+            minW={0}
             gap={4}
             px={TEXT}
             py={12}
@@ -62,7 +62,7 @@ export function Stories({ items, limit = 6 }: { items: NewsItem[]; limit?: numbe
             </SizableText>
           </YStack>
         ))}
-      </XStack>
+      </Grid>
     </YStack>
   );
 }

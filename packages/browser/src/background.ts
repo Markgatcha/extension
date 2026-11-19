@@ -71,6 +71,7 @@ import {
   InFlightRequestDeduper,
   debugLog,
   estimateTextTokens,
+  isLegacyModel,
   loadDebugFlagFromStorage,
   makeChatRequestKey,
   pickModelForTokenBudget,
@@ -180,16 +181,26 @@ function isSenderGenerationCurrent(key: string, generation: number): boolean {
   return senderRequestGeneration.get(key) === generation;
 }
 
-async function listModelsCached(token?: string): Promise<Array<{ id: string; name?: string; description?: string; owned_by?: string }>> {
+const CORE_CLOUD_MODELS: Array<{ id: string; name: string; description: string; owned_by: string; family?: string }> = [
+  { id: 'enso', name: 'Enso', description: 'Autonomous router & planner', owned_by: 'hanzo', family: 'enso' },
+  { id: 'zen6', name: 'Zen 6', description: 'Flagship reasoning & coding', owned_by: 'zenlm', family: 'zen' },
+  { id: 'zen6-flash', name: 'Zen 6 Flash', description: 'Ultra-fast low-latency reasoning', owned_by: 'zenlm', family: 'zen' },
+  { id: 'zen6-coder', name: 'Zen 6 Coder', description: 'Agentic coding & systems', owned_by: 'zenlm', family: 'zen' },
+  { id: 'zen6-max', name: 'Zen 6 Max', description: 'Deep multi-step reasoning', owned_by: 'zenlm', family: 'zen' },
+  { id: 'zen-vl', name: 'Zen VL', description: 'Multimodal vision & page understanding', owned_by: 'zenlm', family: 'zen' },
+  { id: 'kai', name: 'Kai', description: 'Fast decision & tool model', owned_by: 'hanzo', family: 'kai' },
+];
+
+async function listModelsCached(token?: string): Promise<Array<{ id: string; name?: string; description?: string; owned_by?: string; family?: string }>> {
   if (Date.now() - cachedModels.at < MODEL_CACHE_TTL_MS && cachedModels.models.length) {
     return cachedModels.models;
   }
 
-  let models: Array<{ id: string; name?: string; description?: string; owned_by?: string }> = [];
+  let models: Array<{ id: string; name?: string; description?: string; owned_by?: string; family?: string }> = [];
   try {
     const raw = await listModels(token);
     models = (raw || [])
-      .filter((model) => model && typeof model.id === 'string')
+      .filter((model) => model && typeof model.id === 'string' && !isLegacyModel(String(model.id)))
       .map((model) => ({
         id: String(model.id),
         name: model.name ? String(model.name) : undefined,
@@ -197,20 +208,17 @@ async function listModelsCached(token?: string): Promise<Array<{ id: string; nam
         owned_by: model.owned_by ? String(model.owned_by) : undefined,
       }));
   } catch {
-    models = [
-      { id: 'zen5', name: 'Zen5 (Default)', description: 'Unified flagship reasoning & coding', owned_by: 'zenlm' },
-      { id: 'zen5-flash', name: 'Zen5 Flash', description: 'Ultra-fast low-latency reasoning', owned_by: 'zenlm' },
-      { id: 'zen5-coder', name: 'Zen5 Coder', description: 'Agentic coding & system development', owned_by: 'zenlm' },
-      { id: 'enso-auto', name: 'Enso Auto', description: 'Autonomous decision & tool router', owned_by: 'hanzo' },
-    ];
+    models = [...CORE_CLOUD_MODELS];
   }
 
-  // Ensure default Zen5 & Enso are present
+  // Ensure canonical Enso / Zen 6 models are present
   const ids = new Set(models.map((m) => m.id));
-  if (!ids.has('zen5')) models.unshift({ id: 'zen5', name: 'Zen5 (Default)', description: 'Unified flagship reasoning', owned_by: 'zenlm' });
-  if (!ids.has('zen5-flash')) models.push({ id: 'zen5-flash', name: 'Zen5 Flash', description: 'Ultra-fast reasoning', owned_by: 'zenlm' });
-  if (!ids.has('zen5-coder')) models.push({ id: 'zen5-coder', name: 'Zen5 Coder', description: 'Agentic coding', owned_by: 'zenlm' });
-  if (!ids.has('enso-auto')) models.push({ id: 'enso-auto', name: 'Enso Auto', description: 'Autonomous router', owned_by: 'hanzo' });
+  for (const core of CORE_CLOUD_MODELS) {
+    if (!ids.has(core.id)) {
+      models.push(core);
+      ids.add(core.id);
+    }
+  }
 
   // Add connected subscription web models & local private AI
   models.push(
@@ -855,7 +863,7 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              model: requestedModel === 'hanzo-spark' ? 'zen5-spark' : 'zen5-evo',
+              model: requestedModel === 'hanzo-spark' ? 'zen6-spark' : 'zen6-evo',
               messages: budgeted.messages,
               temperature: typeof request.temperature === 'number' ? request.temperature : undefined,
               max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : undefined,
@@ -896,12 +904,17 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
           ? Math.max(64, Math.min(request.max_tokens, CHAT_BUDGETS.maxOutputTokens))
           : CHAT_BUDGETS.maxOutputTokens;
 
+        const storedOrg = await chrome.storage.local.get(['activeOrgId']);
+        const orgId = typeof request.orgId === 'string' && request.orgId
+          ? request.orgId
+          : (typeof storedOrg.activeOrgId === 'string' && storedOrg.activeOrgId ? storedOrg.activeOrgId : undefined);
         const requestKey = makeChatRequestKey(model, budgeted.messages, temperature, maxTokens);
         const { promise, deduped } = inFlightChatRequests.getOrCreate(requestKey, async () => chatCompletion(token, {
           model,
           messages: budgeted.messages,
           temperature,
           max_tokens: maxTokens,
+          orgId,
         }));
         const generation = deduped
           ? (senderRequestGeneration.get(senderKey) || 0)

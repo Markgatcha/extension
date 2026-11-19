@@ -33,6 +33,7 @@ export interface ChatCompletionOptions {
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
+  orgId?: string;
 }
 
 export interface ChatDelta {
@@ -81,14 +82,17 @@ export function chatCompletionStream(
 
   (async () => {
     try {
+      const { orgId, ...payload } = options;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
+      if (orgId) headers['X-Org-Id'] = orgId;
       const response = await fetch(`${API_BASE}/v1/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({
-          ...options,
+          ...payload,
           stream: true,
         }),
         signal: controller.signal,
@@ -158,13 +162,16 @@ export async function chatCompletion(
   token: string,
   options: ChatCompletionOptions,
 ): Promise<string> {
+  const { orgId, ...payload } = options;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+  if (orgId) headers['X-Org-Id'] = orgId;
   const response = await fetch(`${API_BASE}/v1/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(options),
+    headers,
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {

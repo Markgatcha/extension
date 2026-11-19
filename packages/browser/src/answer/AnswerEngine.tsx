@@ -9,6 +9,7 @@ import {
   Step,
   Thread,
   type Chip,
+  type Command,
   type Mind,
   type Modes,
   type Source,
@@ -110,11 +111,15 @@ export interface AnswerEngineProps {
   signOut?: () => void;
   /** Current signed-in user profile, or null when signed out. */
   user?: RailUser | null;
+  /** Active organization id (X-Org-Id) when signed in. */
+  orgId?: string | null;
+  /** Whether the local ZAP router bridge is connected. */
+  zapConnected?: boolean;
   /** Optional initial query (from the omnibox / address bar `?q=`). */
   initialQuery?: string;
 }
 
-export function AnswerEngine({ apiBase, getToken, signIn, signOut, user, initialQuery }: AnswerEngineProps) {
+export function AnswerEngine({ apiBase, getToken, signIn, signOut, user, orgId, zapConnected, initialQuery }: AnswerEngineProps) {
   // Rail hidden by default — the answer surface should read like hanzo.chat:
   // a single centered column. Its own header control brings it back.
   const [collapsed, setCollapsed] = useState(true);
@@ -345,6 +350,17 @@ export function AnswerEngine({ apiBase, getToken, signIn, signOut, user, initial
     [mode, sources, toggleSource],
   );
 
+  const commands = useMemo<Command[]>(
+    () => [
+      { id: 'new-thread', label: 'New thread', keys: '⌘⇧O', run: newThread },
+      { id: 'mode-search', label: 'Search mode', run: () => setMode('search') },
+      { id: 'mode-chat', label: 'Chat mode', run: () => setMode('chat') },
+      { id: 'mode-research', label: 'Research mode', run: () => setMode('research') },
+      { id: 'toggle-rail', label: collapsed ? 'Expand sidebar' : 'Collapse sidebar', run: () => setCollapsed((v) => !v) },
+    ],
+    [newThread, collapsed],
+  );
+
   const composer = (
     <Composer
       value={query}
@@ -355,6 +371,7 @@ export function AnswerEngine({ apiBase, getToken, signIn, signOut, user, initial
       mind={mind}
       mode={modes}
       chips={chips}
+      commands={commands}
       column
     />
   );
@@ -373,6 +390,35 @@ export function AnswerEngine({ apiBase, getToken, signIn, signOut, user, initial
       />
 
       <main className="ae-main">
+        <header className="ae-header">
+          <div className="ae-header-left">
+            <span
+              className={'ae-zap-dot' + (zapConnected ? ' connected' : '')}
+              title={zapConnected ? 'ZAP connected' : 'ZAP disconnected'}
+            />
+          </div>
+          <div className="ae-header-right">
+            <button
+              type="button"
+              className="ae-org-pill"
+              onClick={user ? (signOut ?? signIn) : signIn}
+              title={user ? `hanzo.id · ${orgId || 'default'}` : 'Sign in with hanzo.id'}
+            >
+              {user ? (orgId ? `hanzo.id · ${orgId}` : 'hanzo.id') : 'hanzo.id'}
+            </button>
+            <button
+              type="button"
+              className="ae-header-btn"
+              onClick={newThread}
+              title="New thread"
+              aria-label="New thread"
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        </header>
         {phase === 'idle' ? (
           <YStack flex={1} justify="center" gap="$6" py="$6">
             {composer}

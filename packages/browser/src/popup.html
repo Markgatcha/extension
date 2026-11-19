@@ -8,129 +8,53 @@
 </head>
 <body>
   <div class="container">
-    <!-- Modern Header -->
+    <!-- Quiet Top Header -->
     <header class="header">
       <div class="brand-group">
-        <svg class="logo" viewBox="0 0 67 67" xmlns="http://www.w3.org/2000/svg">
+        <svg class="logo" viewBox="0 0 67 67" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M22.21 67V44.6369H0V67H22.21Z" fill="currentColor"/>
           <path d="M66.7038 22.3184H22.2534L0.0878906 44.6367H44.4634L66.7038 22.3184Z" fill="currentColor"/>
           <path d="M22.21 0H0V22.3184H22.21V0Z" fill="currentColor"/>
           <path d="M66.7198 0H44.5098V22.3184H66.7198V0Z" fill="currentColor"/>
           <path d="M66.7198 67V44.6369H44.5098V67H66.7198Z" fill="currentColor"/>
         </svg>
-        <div class="brand-meta">
-          <span class="brand-title">Hanzo AI</span>
-          <!-- Dynamic Model Badge Button with Dropdown -->
-          <div class="model-picker-wrapper">
-            <button id="model-select-btn" class="brand-badge-btn" type="button" title="Select AI Model">
-              <span id="model-badge">Auto</span>
-              <svg class="chevron" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <div id="model-dropdown" class="model-dropdown hidden">
-              <div class="model-dropdown-group">
-                <span class="model-group-title">Hanzo Cloud</span>
-                <button type="button" class="model-item" data-model="auto">
-                  <div class="model-item-text">
-                    <span class="model-name">Auto</span>
-                    <span class="model-desc">Routes to best model</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="zen5">
-                  <div class="model-item-text">
-                    <span class="model-name">Zen5</span>
-                    <span class="model-desc">Flagship reasoning</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="zen5-flash">
-                  <div class="model-item-text">
-                    <span class="model-name">Zen5 Flash</span>
-                    <span class="model-desc">Ultra-fast responses</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="zen5-coder">
-                  <div class="model-item-text">
-                    <span class="model-name">Zen5 Coder</span>
-                    <span class="model-desc">Code generation & reasoning</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="enso">
-                  <div class="model-item-text">
-                    <span class="model-name">Enso</span>
-                    <span class="model-desc">Agentic planner</span>
-                  </div>
-                </button>
-              </div>
-
-              <div class="model-dropdown-group">
-                <span class="model-group-title">Connected Subscriptions</span>
-                <button type="button" class="model-item" data-model="chatgpt-web">
-                  <div class="model-item-text">
-                    <span class="model-name">ChatGPT Web (Plus)</span>
-                    <span class="model-desc">Zero-footprint temporary chats</span>
-                  </div>
-                  <span class="model-tag plus">Plus</span>
-                </button>
-                <button type="button" class="model-item" data-model="claude-web">
-                  <div class="model-item-text">
-                    <span class="model-name">Claude Web</span>
-                    <span class="model-desc">Active Claude session</span>
-                  </div>
-                </button>
-              </div>
-
-              <div class="model-dropdown-group">
-                <span class="model-group-title">Local &amp; Private AI</span>
-                <button type="button" class="model-item" data-model="hanzo-spark">
-                  <div class="model-item-text">
-                    <span class="model-name">Hanzo Spark</span>
-                    <span class="model-desc">GB10 CUDA (10.0.0.19:1235)</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="hanzo-evo">
-                  <div class="model-item-text">
-                    <span class="model-name">Hanzo Evo</span>
-                    <span class="model-desc">Strix Halo ROCm (10.0.0.21:1234)</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="hanzo-desktop">
-                  <div class="model-item-text">
-                    <span class="model-name">Hanzo Desktop</span>
-                    <span class="model-desc">Local instance (:11435)</span>
-                  </div>
-                </button>
-                <button type="button" class="model-item" data-model="webgpu">
-                  <div class="model-item-text">
-                    <span class="model-name">WebGPU AI</span>
-                    <span class="model-desc">On-device in-browser</span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
+        <span id="header-zap-dot" class="header-zap-dot" title="ZAP: Connecting…"></span>
+        <div class="org-picker-wrapper">
+          <button id="org-pill-btn" class="org-pill-btn" type="button" title="hanzo.id · Active organization (X-Org-Id)">
+            <span id="org-pill-label">hanzo.id</span>
+            <svg class="chevron" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div id="org-dropdown" class="org-dropdown hidden" role="menu"></div>
         </div>
       </div>
 
       <div class="header-actions">
+        <!-- New Thread -->
+        <button id="popup-new-thread-btn" class="icon-btn" type="button" title="New thread" aria-label="New thread">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke-linecap="round"/>
+          </svg>
+        </button>
         <!-- Open Side Panel -->
-        <button id="open-panel" class="icon-btn" title="Open Side Panel">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+        <button id="open-panel" class="icon-btn" type="button" title="Open Side Panel" aria-label="Open Side Panel">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="3"/>
             <line x1="15" y1="3" x2="15" y2="21"/>
           </svg>
         </button>
         <!-- Open New Tab -->
-        <button id="open-newtab-btn" class="icon-btn" title="Open in New Tab">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+        <button id="open-newtab-btn" class="icon-btn" type="button" title="Open in New Tab" aria-label="Open in New Tab">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
             <polyline points="15 3 21 3 21 9"/>
             <line x1="10" y1="14" x2="21" y2="3"/>
           </svg>
         </button>
         <!-- Toggle Settings -->
-        <button id="open-settings" class="icon-btn" title="Settings">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+        <button id="open-settings" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
@@ -201,48 +125,173 @@
           </div>
         </div>
 
-        <!-- Omnibox Form (Chat & Search) -->
+        <!-- hanzo.dev-style Floating Composer -->
         <form id="search-form" class="composer-box">
           <textarea
             id="search-input"
             class="composer-input"
-            placeholder="Ask Hanzo anything, or search…"
-            rows="3"
+            placeholder="Ask anything…"
+            rows="2"
             autocomplete="off"
             spellcheck="false"
           ></textarea>
 
           <div class="composer-bottom">
-            <div class="composer-actions">
-              <button type="submit" id="ask-btn" class="action-submit primary" title="Ask Hanzo AI">
-                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M8 12V4M4 8l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/>
+            <div class="composer-controls-left">
+              <!-- + Attach / toggle page context -->
+              <button type="button" id="composer-attach-btn" class="composer-round-btn" title="Attach or toggle active page context" aria-label="Attach page context" data-active="true">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path d="M8 3v10M3 8h10" stroke-linecap="round"/>
                 </svg>
-                <span>Ask AI</span>
               </button>
-              <button type="button" id="search-web-btn" class="action-submit secondary" title="Search Answer Engine">
-                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+
+              <!-- Enso / Zen 6 Model Selector Pill -->
+              <div class="model-picker-wrapper">
+                <button id="model-select-btn" class="brand-badge-btn" type="button" title="Select AI Model">
+                  <span id="model-badge">Enso</span>
+                  <svg class="chevron" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div id="model-dropdown" class="model-dropdown hidden">
+                  <div class="model-dropdown-group">
+                    <span class="model-group-title">Enso &amp; Zen 6</span>
+                    <button type="button" class="model-item" data-model="enso">
+                      <div class="model-item-text">
+                        <span class="model-name">Enso</span>
+                        <span class="model-desc">Autonomous router &amp; planner</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="zen6">
+                      <div class="model-item-text">
+                        <span class="model-name">Zen 6</span>
+                        <span class="model-desc">Flagship reasoning &amp; coding</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="zen6-flash">
+                      <div class="model-item-text">
+                        <span class="model-name">Zen 6 Flash</span>
+                        <span class="model-desc">Ultra-fast low-latency responses</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="zen6-coder">
+                      <div class="model-item-text">
+                        <span class="model-name">Zen 6 Coder</span>
+                        <span class="model-desc">Agentic coding &amp; systems</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="zen6-max">
+                      <div class="model-item-text">
+                        <span class="model-name">Zen 6 Max</span>
+                        <span class="model-desc">Deep multi-step reasoning</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="zen-vl">
+                      <div class="model-item-text">
+                        <span class="model-name">Zen VL</span>
+                        <span class="model-desc">Multimodal vision &amp; page understanding</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="kai">
+                      <div class="model-item-text">
+                        <span class="model-name">Kai</span>
+                        <span class="model-desc">Fast decision &amp; tool model</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="auto">
+                      <div class="model-item-text">
+                        <span class="model-name">Auto</span>
+                        <span class="model-desc">Token-budget Zen 6 router</span>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div class="model-dropdown-group">
+                    <span class="model-group-title">Connected Subscriptions</span>
+                    <button type="button" class="model-item" data-model="chatgpt-web">
+                      <div class="model-item-text">
+                        <span class="model-name">ChatGPT Web</span>
+                        <span class="model-desc">Zero-footprint temporary chats</span>
+                      </div>
+                      <span class="model-tag">Web</span>
+                    </button>
+                    <button type="button" class="model-item" data-model="claude-web">
+                      <div class="model-item-text">
+                        <span class="model-name">Claude Web</span>
+                        <span class="model-desc">Active Claude session</span>
+                      </div>
+                      <span class="model-tag">Web</span>
+                    </button>
+                  </div>
+
+                  <div class="model-dropdown-group">
+                    <span class="model-group-title">Local &amp; Private AI</span>
+                    <button type="button" class="model-item" data-model="hanzo-spark">
+                      <div class="model-item-text">
+                        <span class="model-name">Hanzo Spark</span>
+                        <span class="model-desc">GB10 CUDA (10.0.0.19:1235)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="hanzo-evo">
+                      <div class="model-item-text">
+                        <span class="model-name">Hanzo Evo</span>
+                        <span class="model-desc">Strix Halo ROCm (10.0.0.21:1234)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="hanzo-desktop">
+                      <div class="model-item-text">
+                        <span class="model-name">Hanzo Desktop</span>
+                        <span class="model-desc">Local instance (:11435)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="model-item" data-model="webgpu">
+                      <div class="model-item-text">
+                        <span class="model-name">WebGPU AI</span>
+                        <span class="model-desc">On-device in-browser</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Voice / Mic Trigger (shown when SpeechRecognition is supported) -->
+              <button type="button" id="voice-mic-btn" class="composer-round-btn hidden" title="Voice dictation" aria-label="Voice dictation" data-listening="false">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10a7 7 0 0 0 14 0" stroke-linecap="round"/>
+                  <line x1="12" y1="17" x2="12" y2="22" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+
+            <div class="composer-actions">
+              <button type="button" id="search-web-btn" class="composer-round-btn" title="Search Answer Engine" aria-label="Search Answer Engine">
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                   <circle cx="7" cy="7" r="4.5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/>
                 </svg>
-                <span>Search</span>
+              </button>
+              <button type="submit" id="ask-btn" class="composer-send-pill" title="Send (Enter)" aria-label="Send">
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                  <path d="M8 12V4M4.5 7.5L8 4l3.5 3.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
               </button>
             </div>
-            <div class="composer-shortcut">
-              <kbd>Enter</kbd> ask · <kbd>Shift+↵</kbd> line
-            </div>
+          </div>
+          <div class="composer-meta-row">
+            <span class="composer-shortcut"><kbd>↵</kbd> send · <kbd>⇧↵</kbd> line · <kbd>⌘K</kbd> commands</span>
           </div>
         </form>
 
-        <!-- Quick Action Pills -->
+        <!-- Quick Action Pills (calm monochrome, zero emojis) -->
         <div class="quick-pills">
           <button type="button" class="quick-pill" data-prompt="Summarize this page in 3 clear bullets">
-            ⚡ Summarize page
+            Summarize page
           </button>
           <button type="button" class="quick-pill" data-prompt="Extract the key takeaways and conclusions">
-            💡 Key takeaways
+            Key takeaways
           </button>
           <button type="button" class="quick-pill" data-prompt="Explain this simply with examples">
-            📖 Explain simply
+            Explain simply
           </button>
         </div>
 
@@ -563,6 +612,14 @@
       </div>
     </div>
 
+    <!-- Command Palette Overlay (⌘K) -->
+    <div id="popup-cmd-palette" class="cmd-palette hidden" role="dialog" aria-label="Command palette">
+      <div class="cmd-palette-card">
+        <input id="cmd-palette-input" class="cmd-palette-input" type="text" placeholder="Type a command or search…" autocomplete="off" spellcheck="false">
+        <div id="cmd-palette-list" class="cmd-palette-list" role="listbox"></div>
+      </div>
+    </div>
+
     <!-- Sleek Minimal Footer -->
     <footer class="footer">
       <div class="footer-status">
@@ -572,7 +629,7 @@
       <div class="footer-links">
         <a href="https://hanzo.ai" target="_blank" rel="noreferrer">hanzo.ai</a>
         <a href="https://docs.hanzo.ai" target="_blank" rel="noreferrer">Docs</a>
-        <span id="footer-version" class="version-label">v1.9.71</span>
+        <span id="footer-version" class="version-label">v1.9.72</span>
       </div>
     </footer>
   </div>

@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, SizableText, YStack } from '@hanzo/ui/primitives';
-import { Composer, Failure, Message, Thread, type Chip, type Mind } from '@hanzo/ui/chat';
+import {
+  Composer,
+  Failure,
+  Message,
+  Thread,
+  type Carried,
+  type Chip,
+  type Command,
+  type Mind,
+  type PlusProps,
+} from '@hanzo/ui/chat';
 import type { ModelCatalogEntry } from '@hanzo/ui/models';
 import { Prose } from './shared/Prose.js';
 
@@ -39,6 +49,11 @@ export interface Turn {
   error?: string;
 }
 
+export interface PageAttachment {
+  title: string;
+  url: string;
+}
+
 export interface ChatProps {
   turns: Turn[];
   /** Send the draft's trimmed text. The composer is already empty. */
@@ -60,11 +75,83 @@ export interface ChatProps {
   signedIn: boolean;
   onSignIn: () => void;
   onSignUp: () => void;
+  /** Optional attached active-page context shown as a removable chip inside `+`. */
+  pageContext?: PageAttachment | null;
+  pageAttached?: boolean;
+  onAttachPage?: () => void;
+  onDetachPage?: () => void;
+  onNewThread?: () => void;
+  onOpenTab?: (tab: 'chat' | 'tools' | 'settings') => void;
+}
+
+type SpeechRecognitionCtor = new () => {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((ev: any) => void) | null;
+  onerror: ((ev: any) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+function getSpeechRecognition(): SpeechRecognitionCtor | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
 export function Chat(props: ChatProps) {
   const { turns, busy, signedIn } = props;
   const [draft, setDraft] = useState('');
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionCtor> | null>(null);
+  const speechSupported = useMemo(() => Boolean(getSpeechRecognition()), []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
+    };
+  }, []);
+
+  const toggleVoice = () => {
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return;
+    if (listening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
+      setListening(false);
+      return;
+    }
+    try {
+      const rec = new Ctor();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = navigator.language || 'en-US';
+      rec.onresult = (ev: any) => {
+        const transcript = Array.from(ev?.results ?? [])
+          .map((r: any) => r?.[0]?.transcript ?? '')
+          .join(' ')
+          .trim();
+        if (transcript) {
+          setDraft((prev) => (prev.trim() ? `${prev.trimEnd()} ${transcript}` : transcript));
+        }
+      };
+      rec.onerror = () => setListening(false);
+      rec.onend = () => setListening(false);
+      recognitionRef.current = rec;
+      rec.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+  };
 
   // The Composer calls this only with something to send and no turn in flight.
   const send = () => {
@@ -87,6 +174,40 @@ export function Chat(props: ChatProps) {
   const chips: Chip[] = [
     { id: 'rag', label: 'RAG', on: props.rag, onPress: () => props.onRag(!props.rag) },
     { id: 'tab', label: 'Tab', on: props.tab, onPress: () => props.onTab(!props.tab) },
+  ];
+
+  const plus: PlusProps = {
+    ...(props.onAttachPage ? { upload: props.onAttachPage } : null),
+    memory: { on: props.rag, set: props.onRag },
+    research: { on: props.tab, set: props.onTab },
+  };
+
+  const carried: Carried[] | undefined =
+    props.pageAttached && props.pageContext && props.onDetachPage
+      ? [
+          {
+            id: 'active-page',
+            label: props.pageContext.title || props.pageContext.url || 'Active page',
+            onRemove: props.onDetachPage,
+          },
+        ]
+      : undefined;
+
+  const commands: Command[] = [
+    ...(props.onNewThread
+      ? [{ id: 'new-thread', label: 'New thread', keys: '⌘⇧O', run: props.onNewThread }]
+      : []),
+    ...(props.onAttachPage
+      ? [{ id: 'attach-page', label: 'Attach active page', keys: '⌘U', run: props.onAttachPage }]
+      : []),
+    { id: 'toggle-rag', label: props.rag ? 'Disable RAG retrieval' : 'Enable RAG retrieval', run: () => props.onRag(!props.rag) },
+    { id: 'toggle-tab', label: props.tab ? 'Disable Tab context' : 'Enable Tab context', run: () => props.onTab(!props.tab) },
+    ...(props.onOpenTab
+      ? [
+          { id: 'open-tools', label: 'Open Tools', run: () => props.onOpenTab?.('tools') },
+          { id: 'open-settings', label: 'Open Settings', run: () => props.onOpenTab?.('settings') },
+        ]
+      : []),
   ];
 
   if (!signedIn) {
@@ -147,10 +268,31 @@ export function Chat(props: ChatProps) {
           onSend={send}
           onStop={props.onStop}
           busy={busy}
+          placeholder="Ask anything…"
           hint={props.status}
           mind={mind}
           chips={chips}
-        />
+          plus={plus}
+          carried={carried}
+          commands={commands}
+        >
+          {speechSupported ? (
+            <button
+              type="button"
+              className="composer-mic-btn"
+              data-listening={listening ? 'true' : 'false'}
+              title={listening ? 'Stop dictation' : 'Voice dictation'}
+              aria-label={listening ? 'Stop dictation' : 'Voice dictation'}
+              onClick={toggleVoice}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 10a7 7 0 0 0 14 0" strokeLinecap="round" />
+                <line x1="12" y1="17" x2="12" y2="22" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null}
+        </Composer>
       </YStack>
     </YStack>
   );

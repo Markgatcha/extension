@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   InFlightRequestDeduper,
+  isLegacyModel,
   makeChatRequestKey,
   pickModelForTokenBudget,
   trimMessagesToBudget,
@@ -59,10 +60,19 @@ describe('runtime-guard', () => {
     expect(runs).toBe(1);
   });
 
-  it('routes auto to zen5-flash for a short prompt and zen5 otherwise', () => {
-    expect(pickModelForTokenBudget('auto', ['zen5', 'zen5-flash'], 200)).toBe('zen5-flash');
-    expect(pickModelForTokenBudget('auto', ['zen5', 'zen5-flash'], 5000)).toBe('zen5');
-    expect(pickModelForTokenBudget('auto', [], 200)).toBe('zen5');
-    expect(pickModelForTokenBudget('zen6', ['zen5'], 200)).toBe('zen6');
+  it('routes auto to zen6-flash for a short prompt and zen6 otherwise, upgrading legacy ids', () => {
+    expect(pickModelForTokenBudget('auto', ['zen6', 'zen6-flash'], 200)).toBe('zen6-flash');
+    expect(pickModelForTokenBudget('auto', ['zen6', 'zen6-flash'], 5000)).toBe('zen6');
+    expect(pickModelForTokenBudget('auto', [], 200)).toBe('zen6');
+    expect(pickModelForTokenBudget('auto', ['enso'], 200)).toBe('enso');
+    expect(pickModelForTokenBudget('zen6-coder', ['zen6'], 200)).toBe('zen6-coder');
+    expect(pickModelForTokenBudget('zen5', ['enso', 'zen6'], 200)).toBe('enso');
+    expect(pickModelForTokenBudget('zen4', ['zen6'], 200)).toBe('zen6');
+    expect(pickModelForTokenBudget('qwen2-72b', ['enso'], 200)).toBe('enso');
+    expect(isLegacyModel('zen4')).toBe(true);
+    expect(isLegacyModel('zen5-flash')).toBe(true);
+    expect(isLegacyModel('qwen2.5-72b')).toBe(true);
+    expect(isLegacyModel('zen6')).toBe(false);
+    expect(isLegacyModel('enso')).toBe(false);
   });
 });

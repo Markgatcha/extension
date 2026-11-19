@@ -12,6 +12,7 @@ import {
   debugLog,
   debounce,
   estimateTextTokens,
+  isLegacyModel,
   loadDebugFlagFromStorage,
   makeChatRequestKey,
   pickModelForTokenBudget,
@@ -74,6 +75,10 @@ class HanzoSidebar {
     this.lastInputTokens = 0;
     this.lastOutputTokens = 0;
     this.authInFlight = false;
+    this.orgs = [];
+    this.activeOrgId = null;
+    this.activePageContext = null;
+    this.pageAttached = false;
     this.refreshTabFilesystemDebounced = debounce(() => {
       if (this.currentTab === 'tools') {
         void this.refreshTabFilesystem();
@@ -92,6 +97,14 @@ class HanzoSidebar {
 
   initializeUI() {
     this.el = {
+      // Quiet Header
+      headerZapDot: document.getElementById('header-zap-dot'),
+      headerOrgPill: document.getElementById('header-org-pill'),
+      headerOrgLabel: document.getElementById('header-org-label'),
+      headerOrgMenu: document.getElementById('header-org-menu'),
+      headerNewThread: document.getElementById('header-new-thread'),
+      headerSettings: document.getElementById('header-settings'),
+
       // Auth
       tabBar: document.getElementById('tab-bar'),
 
@@ -193,12 +206,43 @@ class HanzoSidebar {
           signedIn: this.authenticated,
           onSignIn: () => void this.login(),
           onSignUp: () => void this.signup(),
+          pageContext: this.activePageContext,
+          pageAttached: this.pageAttached,
+          onAttachPage: () => void this.attachActivePage(),
+          onDetachPage: () => {
+            this.pageAttached = false;
+            this.paint();
+          },
+          onNewThread: () => this.newThread(),
+          onOpenTab: (tab) => this.switchTab(tab),
         }),
       ),
     );
   }
 
   setupEventListeners() {
+    // Quiet Header
+    this.el.headerNewThread?.addEventListener('click', () => this.newThread());
+    this.el.headerSettings?.addEventListener('click', () => {
+      this.switchTab(this.currentTab === 'settings' ? 'chat' : 'settings');
+    });
+    this.el.headerOrgPill?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this.authenticated) {
+        void this.login();
+        return;
+      }
+      this.el.headerOrgMenu?.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+      if (
+        !this.el.headerOrgPill?.contains(e.target as Node) &&
+        !this.el.headerOrgMenu?.contains(e.target as Node)
+      ) {
+        this.el.headerOrgMenu?.classList.add('hidden');
+      }
+    });
+
     // Tabs
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
@@ -270,6 +314,7 @@ class HanzoSidebar {
 
     this.loadSettings();
     this.startMonitoring();
+    void this.refreshHeaderStatus();
 
     try {
       const response = await chrome.runtime.sendMessage({ action: 'auth.status' });
@@ -345,14 +390,110 @@ class HanzoSidebar {
     }
     this.loadModels();
     this.loadConversation();
+    void this.loadOrgs();
     void this.refreshBalance();
     void this.refreshModelHub();
+  }
+
+  newThread() {
+    this.cancelStream();
+    this.messages = [];
+    this.pageAttached = false;
+    this.lastRequestKey = null;
+    try {
+      chrome.storage.local.set({ hanzo_chat_messages: [] });
+    } catch {}
+    this.switchTab('chat');
+    this.paint();
+  }
+
+  async attachActivePage() {
+    const ctx = await this.getActiveTabContext();
+    if (ctx && (ctx.title || ctx.url)) {
+      this.activePageContext = ctx;
+      this.pageAttached = true;
+      this.tabContext = true;
+      this.setRagStatus(`Attached: ${ctx.title || ctx.url}`);
+    } else {
+      this.setRagStatus('No active page available');
+    }
+  }
+
+  async refreshHeaderStatus() {
+    try {
+      const [zapResp, tabCtx] = await Promise.all([
+        chrome.runtime.sendMessage({ action: 'zap.status' }).catch(() => null),
+        this.getActiveTabContext(),
+      ]);
+      const connected = Boolean(zapResp?.success && zapResp?.zap?.connected);
+      const capCount = zapResp?.zap?.caps?.length || 0;
+      if (this.el.headerZapDot) {
+        this.el.headerZapDot.classList.toggle('connected', connected);
+        const tabPart = tabCtx?.title ? ` · ${tabCtx.title}` : '';
+        this.el.headerZapDot.title = connected
+          ? `ZAP connected (${capCount} tools)${tabPart}`
+          : `ZAP disconnected${tabPart}`;
+      }
+      if (tabCtx) this.activePageContext = tabCtx;
+    } catch {}
+  }
+
+  async loadOrgs() {
+    try {
+      const resp = await chrome.runtime.sendMessage({ action: 'org.list' });
+      if (resp?.success) {
+        this.orgs = Array.isArray(resp.orgs) ? resp.orgs : [];
+        this.activeOrgId = resp.activeOrgId || this.orgs[0]?.id || null;
+        this.renderOrgMenu();
+      }
+    } catch {}
+  }
+
+  renderOrgMenu() {
+    if (this.el.headerOrgLabel) {
+      this.el.headerOrgLabel.textContent = this.authenticated
+        ? (this.activeOrgId ? `hanzo.id · ${this.activeOrgId}` : 'hanzo.id')
+        : 'hanzo.id';
+    }
+    if (!this.el.headerOrgMenu) return;
+    this.el.headerOrgMenu.innerHTML = '';
+    const heading = document.createElement('div');
+    heading.className = 'org-menu-label';
+    heading.textContent = 'X-Org-Id';
+    this.el.headerOrgMenu.appendChild(heading);
+
+    if (!this.orgs.length) {
+      const item = document.createElement('div');
+      item.className = 'org-menu-item';
+      item.textContent = this.activeOrgId || 'Default org';
+      this.el.headerOrgMenu.appendChild(item);
+      return;
+    }
+
+    for (const org of this.orgs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `org-menu-item${org.id === this.activeOrgId ? ' active' : ''}`;
+      btn.textContent = org.displayName || org.name || org.id;
+      btn.addEventListener('click', async () => {
+        try {
+          await chrome.runtime.sendMessage({ action: 'org.switch', orgId: org.id });
+          this.activeOrgId = org.id;
+          this.renderOrgMenu();
+        } catch {}
+        this.el.headerOrgMenu?.classList.add('hidden');
+      });
+      this.el.headerOrgMenu.appendChild(btn);
+    }
   }
 
   showChatLoginPrompt() {
     // Auth gates chat and nothing else — Tools keeps working signed out, so the
     // prompt lives inside the chat tab rather than over the whole sidebar.
     this.authenticated = false;
+    this.orgs = [];
+    this.activeOrgId = null;
+    this.renderOrgMenu();
     if (this.el.accountPanel) this.el.accountPanel.classList.add('hidden');
     this.paint();
   }
@@ -420,7 +561,10 @@ class HanzoSidebar {
    */
   setModels(entries: ModelCatalogEntry[]) {
     const seen = new Set([AUTO.id]);
-    this.models = [AUTO, ...entries.filter((m) => !seen.has(m.id) && seen.add(m.id))];
+    this.models = [
+      AUTO,
+      ...entries.filter((m) => !isLegacyModel(m.id) && !seen.has(m.id) && seen.add(m.id)),
+    ];
     if (!this.models.some((m) => m.id === this.model)) this.model = AUTO.id;
 
     if (this.el.defaultModel) {
@@ -501,8 +645,12 @@ class HanzoSidebar {
       token = tokenResp.token;
     }
 
+    const outboundContent =
+      this.pageAttached && this.activePageContext?.url
+        ? `[Page Context: "${this.activePageContext.title || ''}" (${this.activePageContext.url})]\n${text}`
+        : text;
     const userMessage = identify({ role: 'user', content: text });
-    let requestMessages = [...this.messages, userMessage];
+    let requestMessages = [...this.messages, { role: 'user', content: outboundContent }];
 
     this.ragContext = null;
     if (this.rag) {
@@ -591,12 +739,16 @@ class HanzoSidebar {
       }
 
       // Stream via direct fetch (sidebar has access via CSP)
+      const streamHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      };
+      if (this.activeOrgId) {
+        streamHeaders['X-Org-Id'] = this.activeOrgId;
+      }
       const response = await fetch(`${HANZO_API_BASE}/v1/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: streamHeaders,
         body: JSON.stringify({
           model: resolvedModel,
           messages: budgeted.messages,
@@ -789,6 +941,12 @@ class HanzoSidebar {
 
   /** `caps` is what the zapd registry lists for this browser. */
   updateMCPStatus(connected, caps = []) {
+    if (this.el.headerZapDot) {
+      this.el.headerZapDot.classList.toggle('connected', connected);
+      this.el.headerZapDot.title = connected
+        ? `ZAP connected (${caps.length} tools)`
+        : 'ZAP disconnected';
+    }
     this.el.mcpStatus.innerHTML = connected ? `
       <span class="status-indicator connected"></span>
       Registered

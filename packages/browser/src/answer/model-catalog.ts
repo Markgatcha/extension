@@ -21,6 +21,7 @@
 
 import { can, fetchModelCatalog, type ModelCatalogEntry } from '@hanzo/ui/models';
 import { CATALOG_BASE_URL } from '../shared/config.js';
+import { isLegacyModel } from '../runtime-guard.js';
 
 /** The "let the router pick" option: no model is pinned and the cloud chooses.
  *  Always valid, so it is the seed and the fallback when the fetch is slow or
@@ -76,7 +77,25 @@ const CONNECTED_MODELS: ModelCatalogEntry[] = [
   },
 ];
 
+const CORE_MODELS: ModelCatalogEntry[] = [
+  { id: 'enso', name: 'Enso', family: 'enso', owned_by: 'hanzo', class: 'ours', description: 'Autonomous router & planner' },
+  { id: 'zen6', name: 'Zen 6', family: 'zen', owned_by: 'zenlm', class: 'ours', description: 'Flagship reasoning & coding' },
+  { id: 'zen6-flash', name: 'Zen 6 Flash', family: 'zen', owned_by: 'zenlm', class: 'ours', description: 'Ultra-fast responses' },
+  { id: 'zen6-coder', name: 'Zen 6 Coder', family: 'zen', owned_by: 'zenlm', class: 'ours', description: 'Agentic coding & systems' },
+  { id: 'zen6-max', name: 'Zen 6 Max', family: 'zen', owned_by: 'zenlm', class: 'ours', description: 'Deep multi-step reasoning' },
+  { id: 'zen-vl', name: 'Zen VL', family: 'zen', owned_by: 'zenlm', class: 'ours', description: 'Multimodal vision & page context' },
+  { id: 'kai', name: 'Kai', family: 'kai', owned_by: 'hanzo', class: 'ours', description: 'Fast decision & tool model' },
+];
+
 export async function fetchCatalog(): Promise<ModelCatalogEntry[]> {
-  const served = await fetchModelCatalog(`${CATALOG_BASE_URL}/v1`);
-  return [AUTO_MODEL, ...served.filter((m) => can(m, 'chat')), ...CONNECTED_MODELS];
+  try {
+    const served = await fetchModelCatalog(`${CATALOG_BASE_URL}/v1`);
+    const chatServed = served.filter((m) => can(m, 'chat') && !isLegacyModel(m.id));
+    if (chatServed.length > 0) {
+      return [AUTO_MODEL, ...chatServed, ...CONNECTED_MODELS];
+    }
+  } catch {
+    // Fall back to canonical Enso / Zen 6 models when offline
+  }
+  return [AUTO_MODEL, ...CORE_MODELS, ...CONNECTED_MODELS];
 }

@@ -1076,11 +1076,11 @@ class HanzoPageOverlay {
       .hanzo-page-panel {
         width: 100%;
         height: 100%;
-        border-left: 1px solid rgba(255, 255, 255, 0.16);
-        background: linear-gradient(180deg, rgba(10, 10, 11, 0.97), rgba(7, 7, 8, 0.97));
-        color: #f5f5f5;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        background: #000000;
+        color: #fafafa;
         overflow: hidden;
-        box-shadow: -22px 0 48px rgba(0, 0, 0, 0.45);
+        box-shadow: -22px 0 48px rgba(0, 0, 0, 0.65);
         transform: translateX(100%);
         opacity: 0;
         pointer-events: none;
@@ -1092,8 +1092,8 @@ class HanzoPageOverlay {
 
       #hanzo-page-overlay-root[data-side="left"] .hanzo-page-panel {
         border-left: none;
-        border-right: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 22px 0 48px rgba(0, 0, 0, 0.45);
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 22px 0 48px rgba(0, 0, 0, 0.65);
         transform: translateX(-100%);
       }
 
@@ -1107,9 +1107,10 @@ class HanzoPageOverlay {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 12px 14px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+        height: 44px;
+        padding: 0 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        background: #09090b;
         flex-shrink: 0;
       }
 
@@ -1252,36 +1253,41 @@ class HanzoPageOverlay {
       /* Composer pinned to bottom of the panel. flex-shrink: 0 prevents
          it from collapsing when the messages scroller grows. */
       .hanzo-page-composer {
-        border-top: 1px solid rgba(255, 255, 255, 0.10);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding: 10px 12px;
         display: flex;
         gap: 8px;
         align-items: flex-end;
-        background: rgba(0, 0, 0, 0.35);
+        background: #050505;
         flex-shrink: 0;
       }
 
       .hanzo-page-composer textarea {
         flex: 1;
         min-height: 38px;
-        max-height: 110px;
+        max-height: 120px;
         resize: none;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.17);
-        background: rgba(255, 255, 255, 0.03);
-        color: #f5f5f5;
-        padding: 9px 11px;
-        font-size: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #0d0d10;
+        color: #fafafa;
+        padding: 9px 12px;
+        font-size: 13px;
+        outline: none;
       }
 
-      /* Primary action: WHITE per @hanzo/brand monochrome guidelines. */
+      .hanzo-page-composer textarea:focus {
+        border-color: rgba(255, 255, 255, 0.24);
+      }
+
+      /* Primary action: WHITE on pitch-black monochrome pill. */
       .hanzo-page-composer button {
-        min-width: 68px;
-        height: 38px;
-        border-radius: 10px;
+        min-width: 60px;
+        height: 36px;
+        border-radius: 9999px;
         border: 1px solid #ffffff;
         background: #ffffff;
-        color: #0a0a0b;
+        color: #000000;
         font-weight: 600;
         font-size: 12px;
         cursor: pointer;
@@ -1356,8 +1362,8 @@ class HanzoPageOverlay {
           <div class="hanzo-page-msg assistant">Ask about this page, inspect any element, or turn on Edit mode to change text in-place.</div>
         </div>
         <div class="hanzo-page-composer">
-          <textarea data-role="input" rows="1" placeholder="Ask about this page..."></textarea>
-          <button data-role="send" type="button">Ask</button>
+          <textarea data-role="input" rows="1" placeholder="Ask anything…"></textarea>
+          <button data-role="send" type="button">Send</button>
         </div>
       </div>
     `;
@@ -1385,7 +1391,8 @@ class HanzoPageOverlay {
     this.editBtn?.addEventListener('click', () => this.setEditMode(!this.editMode));
     this.sendBtn?.addEventListener('click', () => this.askPageQuestion());
     this.inputEl?.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
+      const imeClaimed = event.isComposing || event.key === 'Process' || event.keyCode === 229;
+      if (event.key === 'Enter' && !imeClaimed && (event.metaKey || event.ctrlKey || (!event.shiftKey && !event.altKey))) {
         event.preventDefault();
         this.askPageQuestion();
       }

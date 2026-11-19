@@ -1770,7 +1770,11 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
             signal: AbortSignal.timeout(10000),
           });
           const data = await resp.json();
-          sendResponse({ success: true, models: data.data || data.models || data || [] });
+          const rawModels = data.data || data.models || data || [];
+          const filtered = Array.isArray(rawModels)
+            ? rawModels.filter((m: any) => m && typeof m.id === 'string' && !/^(zen[45]|qwen2)/i.test(m.id))
+            : [];
+          sendResponse({ success: true, models: filtered });
         } catch (e: any) {
           sendResponse({ success: false, error: e.message });
         }
@@ -1795,12 +1799,18 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
           if (typeof request.temperature === 'number') body.temperature = request.temperature;
           if (typeof request.max_tokens === 'number') body.max_tokens = Math.max(64, Math.min(request.max_tokens, 16384));
 
+          const storedOrg = await browser.storage.local.get(['activeOrgId']);
+          const orgId = typeof request.orgId === 'string' && request.orgId
+            ? request.orgId
+            : (typeof storedOrg.activeOrgId === 'string' && storedOrg.activeOrgId ? storedOrg.activeOrgId : undefined);
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          };
+          if (orgId) headers['X-Org-Id'] = orgId;
           const resp = await fetch(`${API_BASE}/v1/chat/completions`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
+            headers,
             body: JSON.stringify(body),
             signal: AbortSignal.timeout(120000),
           });

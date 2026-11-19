@@ -44,7 +44,7 @@ function Root(props: React.ComponentProps<typeof AnswerEngine>) {
 }
 
 function boot() {
-  apply(current({ install: { theme: 'system' } }).pref);
+  apply(current({ install: { theme: 'dark' } }).pref);
 
   const params = new URLSearchParams(location.search);
   const initialQuery = params.get('q') ?? undefined;
@@ -54,6 +54,8 @@ function boot() {
 
   const root = createRoot(el);
   let currentUser: RailUser | null = null;
+  let activeOrgId: string | null = null;
+  let zapConnected = false;
 
   function render() {
     // Every @hanzo/ui component must sit under GuiProvider — a gui component
@@ -65,9 +67,27 @@ function boot() {
         signIn,
         signOut,
         user: currentUser,
+        orgId: activeOrgId,
+        zapConnected,
         ...(initialQuery ? { initialQuery } : {}),
       }),
     );
+  }
+
+  async function refreshBridgeAndOrg(): Promise<void> {
+    try {
+      const [zapResp, orgResp] = await Promise.all([
+        runtime.runtime.sendMessage({ action: 'zap.status' }).catch(() => null) as Promise<any>,
+        runtime.runtime.sendMessage({ action: 'org.list' }).catch(() => null) as Promise<any>,
+      ]);
+      const nextZap = Boolean(zapResp?.success && zapResp?.zap?.connected);
+      const nextOrg = orgResp?.success ? (orgResp.activeOrgId || orgResp.orgs?.[0]?.id || null) : activeOrgId;
+      if (nextZap !== zapConnected || nextOrg !== activeOrgId) {
+        zapConnected = nextZap;
+        activeOrgId = nextOrg;
+        render();
+      }
+    } catch {}
   }
 
   async function refreshAuthStatus(): Promise<void> {
@@ -80,6 +100,7 @@ function boot() {
         currentUser = nextUser;
         render();
       }
+      if (nextUser) void refreshBridgeAndOrg();
     } catch {
       // Ignore transient messaging errors
     }
@@ -109,6 +130,7 @@ function boot() {
 
   render();
   void refreshAuthStatus();
+  void refreshBridgeAndOrg();
 
   try {
     runtime.storage?.onChanged?.addListener((changes, area) => {

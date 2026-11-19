@@ -260,9 +260,17 @@ export async function recordUsageDelta(
   }, 1000) as unknown as number;
 }
 
+const LEGACY_MODEL_RE = /^(zen[45]|qwen2)/i;
+
+/** Returns true for retired model families that must never be offered or routed. */
+export function isLegacyModel(id: string): boolean {
+  return LEGACY_MODEL_RE.test((id || '').trim());
+}
+
 /**
- * What Auto sends: zen5, the default on every Hanzo surface, or zen5-flash for
- * a short prompt when the account lists it. Both are rows of GET /v1/models.
+ * What Auto sends: Enso / Zen 6, the default on every Hanzo surface, or
+ * zen6-flash for a short prompt when the account lists it. Legacy zen4/zen5/qwen2
+ * ids are transparently upgraded to enso/zen6.
  */
 export function pickModelForTokenBudget(
   requestedModel: string,
@@ -270,17 +278,27 @@ export function pickModelForTokenBudget(
   inputTokens: number,
 ): string {
   if (requestedModel && requestedModel !== 'auto') {
+    if (isLegacyModel(requestedModel)) {
+      return availableModels.includes('enso') ? 'enso' : 'zen6';
+    }
     return requestedModel;
   }
-  return inputTokens <= 900 && availableModels.includes('zen5-flash') ? 'zen5-flash' : 'zen5';
+  if (inputTokens <= 900 && availableModels.includes('zen6-flash')) {
+    return 'zen6-flash';
+  }
+  if (availableModels.includes('zen6')) {
+    return 'zen6';
+  }
+  return availableModels.includes('enso') ? 'enso' : 'zen6';
 }
 
 /**
  * The Zen chat models among the rows of GET /v1/models, in the order given. The
  * gateway reports Zen as `owned_by: zenlm`; the id test is @hanzo/ui
  * isChatModel's, which a content script cannot bundle (it reaches react-native).
+ * Excludes retired zen4/zen5/qwen2 rows.
  */
 const NOT_CHAT = /embed|image|video|music|voice|tts|rerank|guard|foley|moderation|router/;
 export function zenModels<T extends { id: string; owned_by?: string }>(rows: T[]): T[] {
-  return rows.filter((m) => m?.owned_by === 'zenlm' && !NOT_CHAT.test(m.id));
+  return rows.filter((m) => m?.owned_by === 'zenlm' && !NOT_CHAT.test(m.id) && !isLegacyModel(m.id));
 }

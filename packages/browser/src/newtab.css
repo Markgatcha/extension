@@ -10,17 +10,34 @@
    `$hover` read them. This sheet declared all of those once, for its dark-only
    palette, and in the same cascade it would have repainted the shared ones. */
 :root {
-  --sidebar-w: 232px;
+  --sidebar-w: 256px;
   /* The icon-rail width is @hanzo/ui primitives/sidebar's SIDEBAR_WIDTH_ICON
      (3rem). Kept as that value, not a local guess, so the rail here and the
      shared primitive collapse to the same size on every surface. */
   --rail-w: 3rem;
 }
 
+/* hanzo.dev pitch-black monochrome tokens in dark mode */
+:root:not(.t_light):not(.light) {
+  --background: #000000;
+  --surface-page: #000000;
+  --card: #09090b;
+  --popover: #0d0d10;
+  --muted: #0f0f12;
+  --composer-ground: #0d0d10;
+  --composer-edge: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-control: rgba(255, 255, 255, 0.12);
+  --border-focus: rgba(255, 255, 255, 0.24);
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
+  overflow-x: hidden;
+  background: var(--background);
 }
 
 a {
@@ -211,6 +228,82 @@ a {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--background);
+}
+
+/* Quiet top header strip */
+.ae-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.ae-header-left,
+.ae-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ae-zap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+
+.ae-zap-dot.connected {
+  background: #4ade80;
+}
+
+.ae-org-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ae-org-pill:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.ae-header-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ae-header-btn:hover {
+  color: var(--text-primary);
+  background: var(--glass);
+  border-color: var(--border);
 }
 
 /* ── Answer prose ────────────────────────────────────────────
@@ -302,7 +395,14 @@ a {
     left: 0;
     width: var(--sidebar-w);
     z-index: 60;
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.75);
+  }
+  .ae-header-btn,
+  .ae-brand,
+  .ae-new,
+  .ae-signin {
+    min-height: 44px;
+    min-width: 44px;
   }
 }
 
