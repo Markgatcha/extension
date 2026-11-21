@@ -17,16 +17,11 @@
  */
 import 'webextension-polyfill';
 
-import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
+import type { ControlSession } from './shared/types.js';
 import { startZap } from './shared/zap.js';
 import { startAgent } from './shared/agent.js';
 import { startSource } from './shared/source.js';
 import { fetchAllUsage } from './shared/usage.js';
-import {
-  getRagConfig,
-  normalizeRagSnippets,
-  queryRagFromEndpoint,
-} from './shared/rag.js';
 import {
   login as sharedLogin,
   signup as sharedSignup,
@@ -1723,50 +1718,6 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
       }
 
       // =======================================================================
-      // RAG (uses shared module — now with ZAP memory support)
-      // =======================================================================
-      case 'rag.query': {
-        try {
-          const config = await getRagConfig(browser.storage.local);
-          const topKInput = Number.parseInt(String(request.topK ?? config.topK), 10);
-          const token = await auth.getValidAccessToken().catch(() => '');
-          const params: RagQueryParams = {
-            query: String(request.query || '').trim(),
-            topK: Number.isFinite(topKInput) ? Math.max(1, Math.min(topKInput, 20)) : 5,
-            knowledgeBase: String(request.knowledgeBase ?? config.knowledgeBase ?? 'hanzo-cloud').trim(),
-            includeTabContext: request.includeTabContext !== undefined
-              ? !!request.includeTabContext
-              : config.includeTabContext,
-            endpoint: String(request.endpoint || config.endpoint || 'https://api.hanzo.ai/v1/search').trim(),
-            apiKey: String(token || request.apiKey || config.apiKey || '').trim(),
-            pageContext: request.pageContext && typeof request.pageContext === 'object'
-              ? {
-                  url: request.pageContext.url ? String(request.pageContext.url) : undefined,
-                  title: request.pageContext.title ? String(request.pageContext.title) : undefined,
-                }
-              : undefined,
-          };
-
-          if (!params.query) {
-            sendResponse({ success: false, error: 'Query is required' });
-            break;
-          }
-
-          const snippets = await queryRagFromEndpoint(params);
-          const source = snippets.length ? (snippets.some(s => s.source === 'hanzo-cloud') ? 'hanzo-cloud' : 'tab-context') : 'none';
-
-          sendResponse({
-            success: true,
-            source,
-            snippets: snippets.slice(0, params.topK),
-          });
-        } catch (e: any) {
-          sendResponse({ success: false, error: e.message });
-        }
-        break;
-      }
-
-      // =======================================================================
       // Cloud Chat
       // =======================================================================
       case 'chat.listModels': {
@@ -1788,56 +1739,6 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
         }
         break;
       }
-
-      case 'chat.complete': {
-        try {
-          const token = await getValidAccessToken();
-          if (!token) { sendResponse({ success: false, error: 'Not authenticated' }); break; }
-
-          const messages = (Array.isArray(request.messages) ? request.messages : [])
-            .filter((m: any) => m && typeof m.content === 'string' && typeof m.role === 'string')
-            .map((m: any) => ({
-              role: (m.role === 'system' || m.role === 'assistant') ? m.role : 'user',
-              content: String(m.content),
-            }));
-          if (!messages.length) { sendResponse({ success: false, error: 'messages are required' }); break; }
-
-          const model = String(request.model || 'auto');
-          const body: any = { model, messages, stream: false };
-          if (typeof request.temperature === 'number') body.temperature = request.temperature;
-          if (typeof request.max_tokens === 'number') body.max_tokens = Math.max(64, Math.min(request.max_tokens, 16384));
-
-          const storedOrg = await browser.storage.local.get(['activeOrgId']);
-          const orgId = typeof request.orgId === 'string' && request.orgId
-            ? request.orgId
-            : (typeof storedOrg.activeOrgId === 'string' && storedOrg.activeOrgId ? storedOrg.activeOrgId : undefined);
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          };
-          if (orgId) headers['X-Org-Id'] = orgId;
-          const resp = await fetch(`${API_BASE}/v1/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(120000),
-          });
-          if (!resp.ok) {
-            const text = await resp.text();
-            throw new Error(`Chat API error ${resp.status}: ${text}`);
-          }
-          const data = await resp.json();
-          const content = data.choices?.[0]?.message?.content || '';
-          sendResponse({ success: true, content, model: data.model || model });
-        } catch (e: any) {
-          sendResponse({ success: false, error: e.message });
-        }
-        break;
-      }
-
-      case 'chat.cancel':
-        sendResponse({ success: true });
-        break;
 
       // =======================================================================
       // Models

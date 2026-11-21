@@ -7,38 +7,18 @@ import { createRoot } from 'react-dom/client';
 import { GuiProvider } from '@hanzo/gui';
 import guiConfig from '@hanzo/ui/gui-config';
 import { parseModels, type ModelCatalogEntry } from '@hanzo/ui/models';
-import {
-  CHAT_BUDGETS,
-  debugLog,
-  debounce,
-  estimateTextTokens,
-  isLegacyModel,
-  loadDebugFlagFromStorage,
-  makeChatRequestKey,
-  pickModelForTokenBudget,
-  recordUsageDelta,
-  trimMessagesToBudget,
-} from './runtime-guard';
+import { debugLog, debounce, loadDebugFlagFromStorage, pickModelForTokenBudget, estimateMessageTokens, zenModels } from './runtime-guard';
 import { API_BASE_URL as HANZO_API_BASE } from './shared/config.js';
+import { follow, reset, send, stop } from './shared/chat.js';
+import type { AgentState } from './shared/agent.js';
 import { Chat } from './Chat.js';
 
 // Hanzo AI Browser Extension Sidebar — Chat + Tools + Settings
 //
-// The chat tab is `@hanzo/ui/chat`, mounted at #chat and driven from here: this
-// class stays the whole wire (auth, retrieval, budgets, dedupe, the stream,
-// persistence) and hands the surface nothing but values and callbacks. Tools and
+// The chat tab is `@hanzo/ui/chat`, mounted at #chat over the background agent's
+// thread (shared/agent.ts): this class follows it and hands the surface values
+// and callbacks. Tools and
 // Settings remain plain DOM — they are panels of controls, not a chat.
-
-/**
- * A turn's identity, minted where the turn is made.
- *
- * The thread keys its rows on it, so it has to be unique within the list and
- * the same across renders — the content is neither, since two turns can read
- * the same and a streaming one changes on every frame. Storage keeps the wire
- * message and not the key, so a restored conversation is re-minted on load.
- */
-let minted = 0;
-const identify = (turn) => ({ ...turn, id: `t${++minted}` });
 
 /** The router entry, always valid, so the picker is never empty or fabricated.
  *  The picker groups a model by its Hanzo family or by who serves it, so this
@@ -54,40 +34,23 @@ class HanzoSidebar {
   constructor() {
     this.agents = new Map();
     this.currentTab = 'chat';
-    this.messages = [];
     // What the chat surface draws. Every field here is a prop; nothing in this
     // class reads the chat DOM. The draft is NOT here — Chat holds it, and
     // hands its text to onSend.
     this.models = [AUTO];
     this.model = 'auto';
-    this.rag = true;
-    this.tabContext = true;
-    this.ragStatus = 'Ready';
-    this.streaming = false;
-    this.streamController = null;
+    this.thread = { turns: [], busy: false };
     this.authenticated = false;
-    this.ragContext = null;
     this.toolsInitialized = false;
     this.monitoringStarted = false;
-    this.lastRequestKey = null;
-    this.lastRequestAt = 0;
-    this.requestEpoch = 0;
-    this.lastInputTokens = 0;
-    this.lastOutputTokens = 0;
     this.authInFlight = false;
     this.orgs = [];
     this.activeOrgId = null;
-    this.activePageContext = null;
-    this.pageAttached = false;
     this.refreshTabFilesystemDebounced = debounce(() => {
       if (this.currentTab === 'tools') {
         void this.refreshTabFilesystem();
       }
     }, 500);
-    this.persistConversationDebounced = debounce(() => {
-      const toStore = this.messages.slice(-50);
-      chrome.storage.local.set({ hanzo_chat_messages: toStore });
-    }, 400);
 
     void loadDebugFlagFromStorage();
     this.initializeUI();
@@ -149,11 +112,6 @@ class HanzoSidebar {
       logoutBtn: document.getElementById('logout-btn'),
       saveSettings: document.getElementById('save-settings'),
       defaultModel: document.getElementById('default-model'),
-      ragIncludeTabContext: document.getElementById('rag-include-tab-context'),
-      ragTopK: document.getElementById('rag-top-k'),
-      ragKb: document.getElementById('rag-kb'),
-      ragEndpoint: document.getElementById('rag-endpoint'),
-      ragApiKey: document.getElementById('rag-api-key'),
 
       // Build info
       buildExtVersion: document.getElementById('build-ext-version'),
@@ -172,6 +130,10 @@ class HanzoSidebar {
     // Auto alone until a catalog arrives. This is also what fills the Settings
     // tab's default-model select, so neither picker is ever written by hand.
     this.setModels([]);
+    follow((state: AgentState) => {
+      this.thread = state;
+      this.paint();
+    });
   }
 
   /** Draw the chat surface from this class's current values. */
@@ -181,38 +143,19 @@ class HanzoSidebar {
         GuiProvider,
         { config: guiConfig, defaultTheme: 'dark' },
         React.createElement(Chat, {
-          turns: this.messages,
-          onSend: (text) => void this.sendMessage(text),
-          onStop: () => this.cancelStream(),
-          onRetry: () => void this.retry(),
-          busy: this.streaming,
+          turns: this.thread.turns,
+          busy: this.thread.busy,
+          onSend: (text) => void this.ask(text),
+          onStop: () => void stop(),
           models: this.models,
           model: this.model,
           onModel: (id) => {
             this.model = id;
             this.paint();
           },
-          rag: this.rag,
-          onRag: (on) => {
-            this.rag = on;
-            this.setRagStatus(on ? 'RAG enabled' : 'RAG disabled');
-          },
-          tab: this.tabContext,
-          onTab: (on) => {
-            this.tabContext = on;
-            this.setRagStatus(this.rag ? (on ? 'Tab context on' : 'Tab context off') : 'RAG disabled');
-          },
-          status: this.ragStatus,
           signedIn: this.authenticated,
           onSignIn: () => void this.login(),
           onSignUp: () => void this.signup(),
-          pageContext: this.activePageContext,
-          pageAttached: this.pageAttached,
-          onAttachPage: () => void this.attachActivePage(),
-          onDetachPage: () => {
-            this.pageAttached = false;
-            this.paint();
-          },
           onNewThread: () => this.newThread(),
           onOpenTab: (tab) => this.switchTab(tab),
         }),
@@ -389,41 +332,31 @@ class HanzoSidebar {
       }
     }
     this.loadModels();
-    this.loadConversation();
     void this.loadOrgs();
     void this.refreshBalance();
     void this.refreshModelHub();
   }
 
   newThread() {
-    this.cancelStream();
-    this.messages = [];
-    this.pageAttached = false;
-    this.lastRequestKey = null;
-    try {
-      chrome.storage.local.set({ hanzo_chat_messages: [] });
-    } catch {}
+    void reset();
     this.switchTab('chat');
-    this.paint();
   }
 
-  async attachActivePage() {
-    const ctx = await this.getActiveTabContext();
-    if (ctx && (ctx.title || ctx.url)) {
-      this.activePageContext = ctx;
-      this.pageAttached = true;
-      this.tabContext = true;
-      this.setRagStatus(`Attached: ${ctx.title || ctx.url}`);
-    } else {
-      this.setRagStatus('No active page available');
+  /** Ask the agent, on the model the picker says, as the sidebar's organization. */
+  async ask(text) {
+    const model = pickModelForTokenBudget(this.model, this.models.map((m) => m.id), estimateMessageTokens([{ role: 'user', content: text }]));
+    try {
+      await send({ text, model, orgId: this.activeOrgId || undefined });
+    } catch (error) {
+      this.showError(error?.message || 'The agent is not running');
     }
   }
 
   async refreshHeaderStatus() {
     try {
-      const [zapResp, tabCtx] = await Promise.all([
+      const [zapResp, [tabCtx]] = await Promise.all([
         chrome.runtime.sendMessage({ action: 'zap.status' }).catch(() => null),
-        this.getActiveTabContext(),
+        chrome.tabs.query({ active: true, currentWindow: true }),
       ]);
       const connected = Boolean(zapResp?.success && zapResp?.zap?.connected);
       const capCount = zapResp?.zap?.caps?.length || 0;
@@ -434,7 +367,6 @@ class HanzoSidebar {
           ? `ZAP connected (${capCount} tools)${tabPart}`
           : `ZAP disconnected${tabPart}`;
       }
-      if (tabCtx) this.activePageContext = tabCtx;
     } catch {}
   }
 
@@ -563,7 +495,7 @@ class HanzoSidebar {
     const seen = new Set([AUTO.id]);
     this.models = [
       AUTO,
-      ...entries.filter((m) => !isLegacyModel(m.id) && !seen.has(m.id) && seen.add(m.id)),
+      ...zenModels(entries).filter((m) => !seen.has(m.id) && seen.add(m.id)),
     ];
     if (!this.models.some((m) => m.id === this.model)) this.model = AUTO.id;
 
@@ -581,327 +513,13 @@ class HanzoSidebar {
     this.paint();
   }
 
-  /** Abandon the turn in flight. The composer's send control is also its stop. */
-  cancelStream() {
-    if (!this.streaming) return;
-    this.streamController?.abort();
-    void chrome.runtime.sendMessage({ action: 'chat.cancel' }).catch(() => {});
-    void recordUsageDelta({ canceledRequests: 1 });
-    this.streaming = false;
-    this.streamController = null;
-    this.paint();
-  }
 
-  /**
-   * Ask the last question again, in place of the failure it produced.
-   *
-   * The dedupe key has to go with it: a retry is BY DEFINITION the request that
-   * just ran, so leaving the key set means the second attempt is skipped as a
-   * duplicate and the control does nothing at all.
-   */
-  async retry() {
-    const failed = this.messages[this.messages.length - 1];
-    if (!failed?.error) return;
-    const asked = this.messages[this.messages.length - 2];
-    if (asked?.role !== 'user') return;
-    this.messages.length -= 2;
-    this.lastRequestKey = null;
-    await this.sendMessage(asked.content);
-  }
 
-  async sendMessage(draft: string) {
-    const text = (draft || '').trim();
-    if (!text) return;
-    const selectedModel = this.model || 'auto';
-    const isSpecialModel = selectedModel === 'chatgpt-web' || selectedModel === 'webgpu' || selectedModel.startsWith('hanzo-');
 
-    if (!this.authenticated && !isSpecialModel) {
-      // Double-check auth status in case it was set externally
-      try {
-        const status = await chrome.runtime.sendMessage({ action: 'auth.status' });
-        if (status?.success && status.authenticated) {
-          this.authenticated = true;
-          if (status.user) this.setUser(status.user);
-        }
-      } catch {}
-      if (!this.authenticated) {
-        this.showError('Please sign in to use chat');
-        return;
-      }
-    }
 
-    this.cancelStream();
 
-    const requestId = ++this.requestEpoch;
 
-    // Get token
-    let token = '';
-    if (!isSpecialModel) {
-      const tokenResp = await chrome.runtime.sendMessage({ action: 'auth.getToken' });
-      if (!tokenResp?.success || !tokenResp.token) {
-        this.showError('Please sign in again');
-        return;
-      }
-      token = tokenResp.token;
-    }
 
-    const outboundContent =
-      this.pageAttached && this.activePageContext?.url
-        ? `[Page Context: "${this.activePageContext.title || ''}" (${this.activePageContext.url})]\n${text}`
-        : text;
-    const userMessage = identify({ role: 'user', content: text });
-    let requestMessages = [...this.messages, { role: 'user', content: outboundContent }];
-
-    this.ragContext = null;
-    if (this.rag) {
-      this.setRagStatus('Retrieving context...');
-      const ragResp = await this.requestRagContext(text);
-      if (ragResp?.success && Array.isArray(ragResp.snippets) && ragResp.snippets.length) {
-        this.ragContext = ragResp;
-        requestMessages = [
-          { role: 'system', content: this.buildRagSystemPrompt(ragResp) },
-          ...requestMessages,
-        ];
-        this.setRagStatus(`RAG: ${ragResp.snippets.length} snippet(s) from ${ragResp.source || 'context'}`);
-      } else if (ragResp?.error) {
-        this.setRagStatus(`RAG unavailable (${ragResp.error})`);
-      } else {
-        this.setRagStatus('No context found');
-      }
-    } else {
-      this.setRagStatus('RAG disabled');
-    }
-
-    const budgeted = trimMessagesToBudget(requestMessages, {
-      maxMessages: CHAT_BUDGETS.maxMessages,
-      maxInputTokens: CHAT_BUDGETS.maxInputTokens,
-    });
-
-    if (!budgeted.messages.length) {
-      this.showError('Message budget exhausted, please shorten your prompt');
-      return;
-    }
-
-    const availableModelIds = this.models
-      .map((m) => m.id)
-      .filter((id) => id !== AUTO.id);
-    const resolvedModel = pickModelForTokenBudget(selectedModel, availableModelIds, budgeted.inputTokens);
-    const maxTokens = Math.min(
-      CHAT_BUDGETS.maxOutputTokens,
-      Math.max(200, Math.ceil(estimateTextTokens(text) * 1.8)),
-    );
-    const requestKey = makeChatRequestKey(resolvedModel, budgeted.messages, undefined, maxTokens);
-
-    if (
-      this.lastRequestKey === requestKey &&
-      Date.now() - this.lastRequestAt < CHAT_BUDGETS.duplicateWindowMs
-    ) {
-      this.showNotification('Duplicate request skipped');
-      await recordUsageDelta({ dedupeHits: 1 });
-      return;
-    }
-    this.lastRequestKey = requestKey;
-    this.lastRequestAt = Date.now();
-
-    if (budgeted.droppedMessages > 0) {
-      this.setRagStatus(
-        `Trimmed ${budgeted.droppedMessages} older message(s) for token budget`,
-      );
-    }
-
-    // The turn, in the transcript. The assistant turn is appended EMPTY and
-    // filled in place: the surface reads `busy` on the last turn to draw the
-    // waiting state, so there is no separate typing element to insert and remove.
-    this.messages.push(userMessage);
-    const assistant = identify({ role: 'assistant', content: '' });
-    this.messages.push(assistant);
-    this.streaming = true;
-    this.paint();
-
-    let fullContent = '';
-
-    try {
-      if (isSpecialModel) {
-        const resp: any = await chrome.runtime.sendMessage({
-          action: 'chat.complete',
-          model: resolvedModel,
-          messages: budgeted.messages,
-        });
-        if (!resp?.success) {
-          throw new Error(resp?.error || 'Execution failed');
-        }
-        fullContent = resp.message?.content || resp.content || '';
-        assistant.content = fullContent;
-        this.paint();
-        this.streaming = false;
-        this.streamController = null;
-        return;
-      }
-
-      // Stream via direct fetch (sidebar has access via CSP)
-      const streamHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      };
-      if (this.activeOrgId) {
-        streamHeaders['X-Org-Id'] = this.activeOrgId;
-      }
-      const response = await fetch(`${HANZO_API_BASE}/v1/chat/completions`, {
-        method: 'POST',
-        headers: streamHeaders,
-        body: JSON.stringify({
-          model: resolvedModel,
-          messages: budgeted.messages,
-          stream: true,
-          max_tokens: maxTokens,
-        }),
-        signal: (this.streamController = new AbortController()).signal,
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`API error ${response.status}: ${errText}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        if (requestId !== this.requestEpoch) {
-          throw new DOMException('Superseded by a newer request', 'AbortError');
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith(':')) continue;
-          if (trimmed.startsWith('data: ')) {
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') break;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                fullContent += delta;
-                assistant.content = fullContent;
-                this.paint();
-              }
-            } catch {}
-          }
-        }
-      }
-
-      if (this.ragContext?.snippets?.length) {
-        fullContent += this.buildRagCitationBlock(this.ragContext);
-      }
-      assistant.content = fullContent;
-      this.paint();
-
-      this.lastInputTokens = budgeted.inputTokens;
-      this.lastOutputTokens = estimateTextTokens(fullContent);
-      await recordUsageDelta({
-        chatRequests: 1,
-        inputTokens: this.lastInputTokens,
-        outputTokens: this.lastOutputTokens,
-      });
-      this.saveConversation();
-      if (this.currentTab === 'tools') {
-        void this.refreshUsageMetrics();
-      }
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        // The empty assistant turn becomes the failure: replacing it in place
-        // keeps the question and its outcome adjacent, which a removed bubble
-        // plus a floating error did not.
-        assistant.error = error?.message || 'Chat failed';
-        await recordUsageDelta({ errors: 1 });
-      } else if (!fullContent) {
-        this.messages.pop();
-      }
-    } finally {
-      if (requestId === this.requestEpoch) {
-        this.streaming = false;
-        this.streamController = null;
-      }
-      this.paint();
-    }
-  }
-
-  async getActiveTabContext() {
-    try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!activeTab) return null;
-      return {
-        url: activeTab.url || '',
-        title: activeTab.title || '',
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  async requestRagContext(query) {
-    try {
-      const pageContext = this.tabContext ? await this.getActiveTabContext() : null;
-      const topK = Math.max(1, Math.min(parseInt(this.el.ragTopK?.value || '5', 10) || 5, 20));
-
-      return await chrome.runtime.sendMessage({
-        action: 'rag.query',
-        query,
-        topK,
-        includeTabContext: this.tabContext,
-        knowledgeBase: this.el.ragKb?.value || 'hanzo-cloud',
-        endpoint: this.el.ragEndpoint?.value || 'https://api.hanzo.ai/v1/search',
-        apiKey: this.el.ragApiKey?.value || '',
-        pageContext: pageContext || undefined,
-      });
-    } catch (error) {
-      return { success: false, error: error?.message || 'Failed to query RAG' };
-    }
-  }
-
-  buildRagSystemPrompt(ragResponse) {
-    const snippets = (ragResponse?.snippets || []).slice(0, 8);
-    const lines = snippets.map((snippet, index) => {
-      const title = snippet.title || snippet.source || `Snippet ${index + 1}`;
-      const score = typeof snippet.score === 'number' ? ` (score ${snippet.score.toFixed(3)})` : '';
-      const sourceLine = snippet.url ? `${title}${score} — ${snippet.url}` : `${title}${score}`;
-      return `[${index + 1}] ${sourceLine}\n${snippet.content}`;
-    });
-
-    return [
-      'You are assisting inside Hanzo Browser Extension.',
-      'Use the retrieved context below when relevant, and state uncertainty if context is insufficient.',
-      'Retrieved Context:',
-      ...lines,
-    ].join('\n\n');
-  }
-
-  buildRagCitationBlock(ragResponse) {
-    const snippets = (ragResponse?.snippets || []).slice(0, 5);
-    if (!snippets.length) return '';
-
-    const rows = snippets.map((snippet, index) => {
-      const title = snippet.title || snippet.source || `Snippet ${index + 1}`;
-      if (snippet.url) {
-        return `- ${title}: ${snippet.url}`;
-      }
-      return `- ${title}`;
-    });
-
-    return `\n\n---\nContext Sources:\n${rows.join('\n')}`;
-  }
-
-  setRagStatus(text) {
-    this.ragStatus = text || 'Ready';
-    this.paint();
-  }
 
   escapeHtml(text) {
     const div = document.createElement('div');
@@ -909,21 +527,7 @@ class HanzoSidebar {
     return div.innerHTML;
   }
 
-  async loadConversation() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['hanzo_chat_messages'], (result) => {
-        if (result.hanzo_chat_messages?.length) {
-          this.messages = result.hanzo_chat_messages.map(identify);
-          this.paint();
-        }
-        resolve();
-      });
-    });
-  }
 
-  saveConversation() {
-    this.persistConversationDebounced();
-  }
 
   // ===========================================================================
   // Tools Tab
@@ -1731,13 +1335,6 @@ class HanzoSidebar {
       'cdpPort',
       'nodePort',
       'hanzo_default_model',
-      'hanzo_rag_endpoint',
-      'hanzo_rag_api_key',
-      'hanzo_rag_kb',
-      'hanzo_rag_top_k',
-      'hanzo_rag_include_tab_context',
-      'hanzo_chat_rag_enabled',
-      'hanzo_chat_tab_context_enabled',
     ], (result) => {
       const mcpPort = document.getElementById('mcp-port-setting');
       const cdpPort = document.getElementById('cdp-port-setting');
@@ -1750,14 +1347,6 @@ class HanzoSidebar {
         this.el.defaultModel.value = result.hanzo_default_model;
       }
 
-      if (this.el.ragEndpoint) this.el.ragEndpoint.value = result.hanzo_rag_endpoint || '';
-      if (this.el.ragApiKey) this.el.ragApiKey.value = result.hanzo_rag_api_key || '';
-      if (this.el.ragKb) this.el.ragKb.value = result.hanzo_rag_kb || '';
-      if (this.el.ragTopK) this.el.ragTopK.value = String(result.hanzo_rag_top_k || 5);
-      if (this.el.ragIncludeTabContext) this.el.ragIncludeTabContext.checked = result.hanzo_rag_include_tab_context !== false;
-      this.rag = result.hanzo_chat_rag_enabled !== false;
-      this.tabContext = result.hanzo_chat_tab_context_enabled !== false;
-      this.setRagStatus(this.rag ? 'Ready' : 'RAG disabled');
     });
 
     this.populateBuildInfo();
@@ -1839,13 +1428,6 @@ class HanzoSidebar {
       'safe-mode': document.getElementById('safe-mode')?.checked,
       'enable-webgpu': document.getElementById('enable-webgpu')?.checked,
       maxAgents: parseInt(document.getElementById('max-agents')?.value) || 3,
-      hanzo_rag_endpoint: this.el.ragEndpoint?.value?.trim() || '',
-      hanzo_rag_api_key: this.el.ragApiKey?.value?.trim() || '',
-      hanzo_rag_kb: this.el.ragKb?.value?.trim() || '',
-      hanzo_rag_top_k: Math.max(1, Math.min(parseInt(this.el.ragTopK?.value || '5', 10) || 5, 20)),
-      hanzo_rag_include_tab_context: !!this.el.ragIncludeTabContext?.checked,
-      hanzo_chat_rag_enabled: this.rag,
-      hanzo_chat_tab_context_enabled: this.tabContext,
     });
 
     // Sync settings to ~/.hanzo/extension/config.json via CDP bridge

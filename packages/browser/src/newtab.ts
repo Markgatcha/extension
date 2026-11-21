@@ -16,7 +16,7 @@ import { apply, current, useScheme } from '@hanzo/appearance';
 import guiConfig from '@hanzo/ui/gui-config';
 import { AnswerEngine } from './answer/AnswerEngine.js';
 import type { RailUser } from './answer/Rail.js';
-import { API_BASE_URL, STORAGE_KEYS } from './shared/config.js';
+import { STORAGE_KEYS } from './shared/config.js';
 
 declare const browser: typeof chrome;
 const runtime: typeof chrome = (globalThis as any).browser ?? (globalThis as any).chrome;
@@ -62,7 +62,6 @@ function boot() {
     // mounted outside it throws on first paint and takes the whole page with it.
     root.render(
       React.createElement(Root, {
-        apiBase: API_BASE_URL,
         getToken,
         signIn,
         signOut,

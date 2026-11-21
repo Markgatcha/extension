@@ -16,6 +16,7 @@ import {
 } from './shared/shortcut.js';
 import { estimateMessageTokens, pickModelForTokenBudget, zenModels } from './runtime-guard';
 import type { AgentState } from './shared/agent.js';
+import { follow as followThread, send as sendTurn, stop as stopTurn } from './shared/chat.js';
 
 interface SourceLocation {
   file: string;
@@ -877,7 +878,7 @@ class HanzoPageOverlay {
   private watchMode = false;
   private editMode = false;
   private modelsLoaded = false;
-  private agent: chrome.runtime.Port | null = null;
+  private following = false;
   private selectedContext: OverlayElementContext | null = null;
   private hoveredElement: HTMLElement | null = null;
   private editingElement: HTMLElement | null = null;
@@ -1011,7 +1012,10 @@ class HanzoPageOverlay {
     this.root?.setAttribute('data-open', 'true');
     this.applyPushIfOpen();
     this.loadModels();
-    this.follow();
+    if (!this.following) {
+      this.following = true;
+      followThread((state) => this.draw(state));
+    }
     this.focusInput();
   }
 
@@ -1656,21 +1660,6 @@ class HanzoPageOverlay {
     this.inputEl.focus();
   }
 
-  /** The thread is the background agent's, the popup's too; a stopped worker closes the port, so connect again. */
-  private follow(): void {
-    if (this.agent) return;
-    const port = chrome.runtime.connect({ name: 'agent' });
-    this.agent = port;
-    port.onMessage.addListener((m: { action?: string; state?: AgentState }) => {
-      if (m?.action === 'agent.update' && m.state) this.draw(m.state);
-    });
-    port.onDisconnect.addListener(() => {
-      void chrome.runtime.lastError;
-      this.agent = null;
-      if (this.open) setTimeout(() => this.follow(), 500);
-    });
-  }
-
   private draw(state: AgentState): void {
     this.sending = state.busy;
     if (this.sendBtn) this.sendBtn.textContent = state.busy ? 'Stop' : 'Send';
@@ -1725,7 +1714,7 @@ class HanzoPageOverlay {
   private async askPageQuestion(): Promise<void> {
     if (!this.inputEl) return;
     if (this.sending) {
-      void chrome.runtime.sendMessage({ action: 'agent.stop' });
+      void stopTurn();
       return;
     }
 
@@ -1743,13 +1732,7 @@ class HanzoPageOverlay {
     );
 
     try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'agent.send',
-        text: prompt,
-        model,
-        context: this.buildPageContext(),
-      });
-      if (!response?.success) throw new Error(response?.error || 'The agent is not running');
+      await sendTurn({ text: prompt, model, context: this.buildPageContext() });
     } catch (error: any) {
       this.appendMessage('assistant', `Error: ${error?.message || 'Chat request failed'}`);
     } finally {

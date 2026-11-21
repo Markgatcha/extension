@@ -19,6 +19,7 @@ import { getConsent, setConsent, capture } from './shared/consent.js';
 import { renderMarkdown } from './shared/markdown.js';
 import { estimateMessageTokens, pickModelForTokenBudget, zenModels } from './runtime-guard.js';
 import type { AgentState } from './shared/agent.js';
+import { follow as followThread, reset as resetThread, send as sendTurn, stop as stopTurn } from './shared/chat.js';
 
 declare const browser: typeof chrome & {
   sidebarAction?: {
@@ -376,45 +377,27 @@ document.addEventListener('DOMContentLoaded', () => {
     thread.scrollTop = thread.scrollHeight;
   }
 
-  function ask(text: string) {
+  async function ask(text: string) {
     const q = text.trim();
     if (!q || busy) return;
     if (searchInput) searchInput.value = '';
     resizeComposer();
     const model = pickModelForTokenBudget(selectedModel, models.map((m) => m.id), estimateMessageTokens([{ role: 'user', content: q }]));
-    chrome.runtime.sendMessage(
-      { action: 'agent.send', text: q, model, tabId: activeTabId, orgId: activeOrgId || undefined },
-      (resp) => {
-        if (chrome.runtime.lastError || !resp?.success) {
-          const row = document.createElement('div');
-          row.className = 'msg msg-error';
-          row.textContent = resp?.error || chrome.runtime.lastError?.message || 'The agent is not running.';
-          thread?.appendChild(row);
-          if (thread) thread.scrollTop = thread.scrollHeight;
-        }
-      },
-    );
+    try {
+      await sendTurn({ text: q, model, tabId: activeTabId, orgId: activeOrgId || undefined });
+    } catch (e) {
+      const row = document.createElement('div');
+      row.className = 'msg msg-error';
+      row.textContent = e instanceof Error ? e.message : String(e);
+      thread?.appendChild(row);
+      if (thread) thread.scrollTop = thread.scrollHeight;
+    }
   }
 
-  function stop() {
-    chrome.runtime.sendMessage({ action: 'agent.stop' }, () => void chrome.runtime.lastError);
-  }
-
-  // The thread arrives on connect and after every change; a stopped worker closes the port, so connect again.
-  function follow() {
-    const port = chrome.runtime.connect({ name: 'agent' });
-    port.onMessage.addListener((m) => {
-      if (m?.action === 'agent.update') drawThread(m.state as AgentState);
-    });
-    port.onDisconnect.addListener(() => {
-      void chrome.runtime.lastError;
-      setTimeout(follow, 500);
-    });
-  }
-  follow();
+  followThread(drawThread);
 
   popupNewThreadBtn?.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'agent.reset' }, () => void chrome.runtime.lastError);
+    void resetThread();
     if (searchInput) searchInput.value = '';
     resizeComposer();
     showMain();
@@ -471,7 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   searchForm?.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (busy) stop();
+    if (busy) void stopTurn();
     else ask(searchInput?.value ?? '');
   });
 

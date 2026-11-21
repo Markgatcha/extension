@@ -53,7 +53,7 @@ describe('converse', () => {
     expect(gw.requests[0].url).toBe('https://api.hanzo.ai/v1/chat/completions');
     expect(gw.requests[0].headers).toMatchObject({ Authorization: 'Bearer tok', 'X-Org-Id': 'acme' });
     expect(gw.requests[0].body).toMatchObject({ model: 'zen6', stream: false, tool_choice: 'auto' });
-    expect(gw.requests[0].body.tools.map((t: any) => t.function.name)).toEqual(['snapshot', 'read', 'act', 'navigate', 'wait']);
+    expect(gw.requests[0].body.tools.map((t: any) => t.function.name)).toEqual(TOOLS.map((t) => t.function.name));
     // The second request carries the model's call and the tool's answer, paired by id.
     const second = gw.requests[1].body.messages;
     expect(second.at(-2)).toMatchObject({ role: 'assistant', tool_calls: [{ id: 'c1' }] });
@@ -147,8 +147,8 @@ describe('tools', () => {
     expect(long).toContain('cut at');
   });
 
-  it('offers every tool as a drive method', () => {
-    for (const t of TOOLS) expect(['snapshot', 'read', 'act', 'navigate', 'wait']).toContain(t.function.name);
+  it('offers the page tools and the gateway tools', () => {
+    expect(TOOLS.map((t) => t.function.name)).toEqual(['snapshot', 'read', 'act', 'navigate', 'search', 'recall', 'fetch', 'wait']);
   });
 });
 
@@ -251,6 +251,57 @@ describe('the agent', () => {
       ['assistant', 'Bought.'],
       ['user', 'did it work?'],
     ]);
+  });
+
+  it('answers from beyond the tab: search, recall and fetch go to the gateway, not the page', async () => {
+    const gw = gateway(
+      wants(call('a', 'search', { query: 'zen6' }), call('b', 'recall', { query: 'roadmap' }), call('c', 'fetch', { url: 'https://a.test/x' })),
+      { results: [{ title: 'Zen 6', url: 'https://z.test/', content: 'the model' }] },
+      { hits: [{ id: 'd1', title: 'Roadmap', passage: 'ship it', url: 'https://o.test/r' }] },
+      { success: true, data: { title: 'X', url: 'https://a.test/x', markdown: '# X' } },
+      says('Zen 6 is the model [Zen 6](https://z.test/).'),
+    );
+    const agent = startAgent({ api: fakeApi(), token: async () => 'tok', fetch: gw.fetch });
+    await ask(agent, 'agent.send', { text: 'what is zen6', model: 'zen6' });
+    await settled(agent);
+
+    expect(driven).not.toHaveBeenCalled();
+    expect(gw.requests.slice(1, 4).map((r) => [r.url, r.body])).toEqual([
+      ['https://api.hanzo.ai/v1/websearch', { q: 'zen6' }],
+      ['https://api.hanzo.ai/v1/search', { query: 'roadmap', limit: 5 }],
+      ['https://api.hanzo.ai/v1/crawl', { url: 'https://a.test/x' }],
+    ]);
+    expect(gw.requests[1].headers).toMatchObject({ Authorization: 'Bearer tok', 'X-Org-Id': 'acme' });
+    const shown = gw.requests[4].body.messages.filter((m: any) => m.role === 'tool').map((m: any) => m.content);
+    expect(shown).toEqual(['1. Zen 6 — https://z.test/\nthe model', '1. Roadmap — https://o.test/r\nship it', 'X — https://a.test/x\n\n# X']);
+    expect(agent.state.turns.map((t) => t.content)).toEqual([
+      'what is zen6', 'search "zen6"', 'recall "roadmap"', 'read https://a.test/x', 'Zen 6 is the model [Zen 6](https://z.test/).',
+    ]);
+  });
+
+  it('tells the model when a page cannot be read or an address is not http', async () => {
+    const gw = gateway(
+      wants(call('a', 'fetch', { url: 'https://a.test/' }), call('b', 'fetch', { url: 'file:///etc/passwd' })),
+      { success: false, error: 'blocked host' },
+      says('no'),
+    );
+    const agent = startAgent({ api: fakeApi(), token: async () => 't', fetch: gw.fetch });
+    await ask(agent, 'agent.send', { text: 'read', model: 'zen6' });
+    await settled(agent);
+    const shown = gw.requests[2].body.messages.filter((m: any) => m.role === 'tool').map((m: any) => m.content);
+    expect(shown).toEqual(['error: blocked host', 'error: only http and https addresses open']);
+    expect(gw.requests).toHaveLength(3); // the refused address never left the browser
+  });
+
+  it('counts each turn once for the usage panel: answered, failed, stopped', async () => {
+    const record = vi.fn();
+    const gw = gateway(says('ok'), () => new Response('down', { status: 502 }));
+    const agent = startAgent({ api: fakeApi(), token: async () => 't', fetch: gw.fetch, record });
+    await ask(agent, 'agent.send', { text: 'one', model: 'zen6' });
+    await settled(agent);
+    await ask(agent, 'agent.send', { text: 'two', model: 'zen6' });
+    await settled(agent);
+    expect(record.mock.calls.map((c) => c[0])).toEqual([{ chatRequests: 1 }, { errors: 1 }]);
   });
 
   it('asks for sign-in instead of calling the gateway without a session', async () => {

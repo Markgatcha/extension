@@ -1,87 +1,67 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, SizableText, YStack } from '@hanzo/ui/primitives';
-import {
-  Composer,
-  Failure,
-  Message,
-  Thread,
-  type Carried,
-  type Chip,
-  type Command,
-  type Mind,
-  type PlusProps,
-} from '@hanzo/ui/chat';
+import { Composer, Failure, Message, Step, Thread, type Command, type Mind } from '@hanzo/ui/chat';
 import type { ModelCatalogEntry } from '@hanzo/ui/models';
+import { Widgets } from './answer/WidgetView.js';
+import { extractWidgets } from './answer/widget.js';
+import type { Turn } from './shared/agent.js';
 import { Prose } from './shared/Prose.js';
 
 /**
- * The sidebar's chat surface — `@hanzo/ui/chat`, the same shell the new-tab
- * answer engine and every other Hanzo surface draw with.
- *
- * The sidebar is the narrow client: ~360px, an MV3 extension page, and a
- * transport that is the service worker rather than a fetch loop. None of that
- * reaches the presentation. Every turn, the model and the busy flag arrive as
- * props and every action leaves as a callback, so `sidebar.ts` keeps the whole
- * wire — token brokering, retrieval, budgets, dedupe, the stream — and this
- * file keeps none of it.
- *
- * The draft is the one thing held here, as `@hanzo/ui/chat`'s own `Chat` holds
- * it. A half-typed question belongs to this screen and nothing outside it
- * reads it, so it stays in this component, and `onSend` gets its trimmed text.
- * The Composer is controlled and must be handed a value on every render.
- *
- * Width is the one thing the shell is asked to bend on. `Thread` caps prose at a
- * reading measure and centres it, which in a ~360px column would inset the text
- * from both edges, so it is told to fill — and its gutters come from the wrapper
- * here, because the shell drops its own padding along with the cap.
- *
- * The composer draws the sidebar's choices in the quiet line under its frame,
- * as it does on the new tab: retrieval and the open tab as chips at its start,
- * the model as the word at its end.
+ * The chat surface the sidebar draws: `@hanzo/ui/chat`'s Thread and Composer over
+ * the background agent's thread (shared/agent.ts). The thread, the model call and
+ * the tools are the agent's; this file draws turns and hands the person's words
+ * back. `Turns` is the one drawing of a thread, the new tab's too.
  */
-
-export interface Turn {
-  /** Minted by `sidebar.ts` where the turn is made. The thread keys rows on it. */
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  /** The turn failed. Rendered as the shell's Failure, with a retry. */
-  error?: string;
-}
-
-export interface PageAttachment {
-  title: string;
-  url: string;
-}
 
 export interface ChatProps {
   turns: Turn[];
+  busy: boolean;
   /** Send the draft's trimmed text. The composer is already empty. */
   onSend: (text: string) => void;
   onStop: () => void;
-  /** Run the last question again. */
-  onRetry: () => void;
-  busy: boolean;
   models: ModelCatalogEntry[];
   model: string;
   onModel: (id: string) => void;
-  /** Whether retrieval runs before the turn, and whether it sees the open tab. */
-  rag: boolean;
-  onRag: (on: boolean) => void;
-  tab: boolean;
-  onTab: (on: boolean) => void;
-  /** What retrieval last did. Shown at the end of the composer's row, before send. */
-  status: string;
   signedIn: boolean;
   onSignIn: () => void;
   onSignUp: () => void;
-  /** Optional attached active-page context shown as a removable chip inside `+`. */
-  pageContext?: PageAttachment | null;
-  pageAttached?: boolean;
-  onAttachPage?: () => void;
-  onDetachPage?: () => void;
   onNewThread?: () => void;
   onOpenTab?: (tab: 'chat' | 'tools' | 'settings') => void;
+}
+
+/** A thread: what was asked, the steps taken on the way, and what came back. */
+export function Turns({ turns, busy }: { turns: Turn[]; busy: boolean }) {
+  const last = turns[turns.length - 1];
+  return (
+    <>
+      {turns.map((t, i) =>
+        t.role === 'step' ? (
+          <Step key={t.id} name={t.content} status={busy && i === turns.length - 1 ? 'running' : 'done'} />
+        ) : t.role === 'user' ? (
+          <Message key={t.id} role="user">
+            {t.content}
+          </Message>
+        ) : (
+          <Message key={t.id} role="assistant">
+            {t.error ? <Failure>{t.error}</Failure> : <Answer text={t.content} />}
+          </Message>
+        ),
+      )}
+      {busy && last?.role === 'user' ? <Message role="assistant" busy /> : null}
+    </>
+  );
+}
+
+/** An answer picks its own presentation: widget blocks render as components, the prose is what is left. */
+function Answer({ text }: { text: string }) {
+  const { prose, widgets } = extractWidgets(text);
+  return (
+    <>
+      <Widgets widgets={widgets} />
+      <Prose text={prose} />
+    </>
+  );
 }
 
 type SpeechRecognitionCtor = new () => {
@@ -170,38 +150,10 @@ export function Chat(props: ChatProps) {
     free: false,
     pick: props.onModel,
   };
-  // `on` is the toggle's state, so a chip in the full ink is one in force.
-  const chips: Chip[] = [
-    { id: 'rag', label: 'RAG', on: props.rag, onPress: () => props.onRag(!props.rag) },
-    { id: 'tab', label: 'Tab', on: props.tab, onPress: () => props.onTab(!props.tab) },
-  ];
-
-  const plus: PlusProps = {
-    ...(props.onAttachPage ? { upload: props.onAttachPage } : null),
-    memory: { on: props.rag, set: props.onRag },
-    research: { on: props.tab, set: props.onTab },
-  };
-
-  const carried: Carried[] | undefined =
-    props.pageAttached && props.pageContext && props.onDetachPage
-      ? [
-          {
-            id: 'active-page',
-            label: props.pageContext.title || props.pageContext.url || 'Active page',
-            onRemove: props.onDetachPage,
-          },
-        ]
-      : undefined;
-
   const commands: Command[] = [
     ...(props.onNewThread
       ? [{ id: 'new-thread', label: 'New thread', keys: '⌘⇧O', run: props.onNewThread }]
       : []),
-    ...(props.onAttachPage
-      ? [{ id: 'attach-page', label: 'Attach active page', keys: '⌘U', run: props.onAttachPage }]
-      : []),
-    { id: 'toggle-rag', label: props.rag ? 'Disable RAG retrieval' : 'Enable RAG retrieval', run: () => props.onRag(!props.rag) },
-    { id: 'toggle-tab', label: props.tab ? 'Disable Tab context' : 'Enable Tab context', run: () => props.onTab(!props.tab) },
     ...(props.onOpenTab
       ? [
           { id: 'open-tools', label: 'Open Tools', run: () => props.onOpenTab?.('tools') },
@@ -239,25 +191,7 @@ export function Chat(props: ChatProps) {
     <YStack flex={1} minH={0}>
       <YStack flex={1} minH={0} px="$3">
         <Thread maxWidth={0} gap={16}>
-          {turns.length === 0 ? (
-            <Message role="system">Ask anything. Powered by Hanzo Cloud.</Message>
-          ) : (
-            turns.map((t, i) => (
-              <Message
-                key={t.id}
-                role={t.role}
-                busy={busy && i === turns.length - 1 && t.role === 'assistant' && !t.content}
-              >
-                {t.error ? (
-                  <Failure onRetry={props.onRetry}>{t.error}</Failure>
-                ) : t.role === 'assistant' ? (
-                  <Prose text={t.content} />
-                ) : (
-                  t.content
-                )}
-              </Message>
-            ))
-          )}
+          {turns.length === 0 ? <Message role="system">Ask anything, or tell me what to do on this page.</Message> : <Turns turns={turns} busy={busy} />}
         </Thread>
       </YStack>
 
@@ -269,11 +203,7 @@ export function Chat(props: ChatProps) {
           onStop={props.onStop}
           busy={busy}
           placeholder="Ask anything…"
-          hint={props.status}
           mind={mind}
-          chips={chips}
-          plus={plus}
-          carried={carried}
           commands={commands}
         >
           {speechSupported ? (

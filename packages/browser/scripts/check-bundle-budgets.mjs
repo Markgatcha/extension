@@ -42,7 +42,7 @@ const BUDGETS = {
   // schemas, the system prompt and the loop that lets the chat act in the page.
   // 283.6 — RAISED from 277 for the linked source (shared/source.ts): device
   // key, signed heartbeat, provider detection, and the usage outbox.
-  'background.js': 284,
+  'background.js': 278,
   'content-script.js': 62, // 57.0
   // 29.7 — RAISED from 29 (28.1) for closed Shadow-DOM `>>>` selector piercing
   // (`deepQuerySelector`), ShadowRoot/SVG hit-testing (`sameHitTarget`), and
@@ -50,7 +50,7 @@ const BUDGETS = {
   'page.js': 31,
   // 1079.6 — RAISED from 765 with newtab.js below, for the same reason: both
   // draw the one composer of @hanzo/ui 8.29.40.
-  'sidebar.js': 1085,
+  'sidebar.js': 1082,
   // 65.5 — RAISED from 65 for the Linked to Hanzo section.
   'popup.js': 66,
   // 712.7 — @hanzo/sources' shared view (gui runtime included), loaded only when
@@ -67,7 +67,7 @@ const BUDGETS = {
   // @hanzo/appearance) and @hanzo/i18n +10.6. Importing only Thread from
   // `@hanzo/ui/chat` already pulls the gui half, so the lever is that
   // package's barrel, not this page.
-  'newtab.js': 1090,
+  'newtab.js': 1066,
   // 65.3 — @hanzo/ui's theme.css (design's tokens for both themes and the
   // composer's paint) and the page's own rules, bundled by newtab.ts. It was
   // 366.8 while the page imported the `@hanzo/ui` root, whose root.js imports

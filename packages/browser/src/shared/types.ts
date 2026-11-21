@@ -8,24 +8,3 @@ export interface ControlSession {
   task: string | null;
   startedAt: number | null;
 }
-
-export interface RagSnippet {
-  content: string;
-  title?: string;
-  source?: string;
-  score?: number;
-  url?: string;
-}
-
-export interface RagQueryParams {
-  query: string;
-  topK: number;
-  knowledgeBase: string;
-  includeTabContext: boolean;
-  endpoint: string;
-  apiKey: string;
-  pageContext?: {
-    url?: string;
-    title?: string;
-  };
-}

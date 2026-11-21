@@ -23,16 +23,10 @@ const sidebar = (over: Partial<ChatProps> = {}): ChatProps => ({
   turns: [],
   onSend: () => {},
   onStop: () => {},
-  onRetry: () => {},
   busy: false,
   models: [{ id: 'auto', name: 'Auto', owned_by: 'router', description: 'Routes to the best model' }],
   model: 'auto',
   onModel: () => {},
-  rag: true,
-  onRag: () => {},
-  tab: true,
-  onTab: () => {},
-  status: 'Ready',
   signedIn: true,
   onSignIn: () => {},
   onSignUp: () => {},
@@ -89,5 +83,26 @@ describe('the sidebar chat', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith('Say pong.');
     expect(field.value).toBe('');
+  });
+
+  it('draws the agent\'s thread: the question, the steps it took, the answer, a failure', () => {
+    const host = mount(
+      sidebar({
+        turns: [
+          { id: '1', role: 'user', content: 'buy it' },
+          { id: '2', role: 'step', content: 'click @e1' },
+          { id: '3', role: 'assistant', content: 'Bought **one**.' },
+          { id: '4', role: 'assistant', content: '', error: 'Chat API error 402: no plan' },
+        ],
+      }),
+    );
+    const turns = [...host.querySelectorAll('[data-slot="message"]')].map((m) => [m.getAttribute('data-role'), m.textContent]);
+    expect(turns).toEqual([
+      ['user', 'buy it'],
+      ['assistant', 'Bought one.'],
+      ['assistant', expect.stringContaining('Chat API error 402: no plan')],
+    ]);
+    expect(host.textContent).toContain('click @e1');
+    expect(host.querySelector('[data-slot="message"][data-role="assistant"] strong')?.textContent).toBe('one');
   });
 });

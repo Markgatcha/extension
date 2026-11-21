@@ -551,9 +551,6 @@ importers:
 
   packages/browser:
     dependencies:
-      '@hanzo/ai':
-        specifier: 'catalog:'
-        version: 0.6.7(react@19.2.8)
       '@hanzo/appearance':
         specifier: 'catalog:'
         version: 0.2.13(react@19.2.8)

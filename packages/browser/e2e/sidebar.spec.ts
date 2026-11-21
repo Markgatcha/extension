@@ -107,11 +107,6 @@ test.describe('Sidebar', () => {
     await expect(page.locator('#mcp-port-setting')).toBeAttached();
     await expect(page.locator('#cdp-port-setting')).toBeAttached();
     await expect(page.locator('#node-port-setting')).toBeAttached();
-    await expect(page.locator('#rag-include-tab-context')).toBeAttached();
-    await expect(page.locator('#rag-top-k')).toBeAttached();
-    await expect(page.locator('#rag-kb')).toBeAttached();
-    await expect(page.locator('#rag-endpoint')).toBeAttached();
-    await expect(page.locator('#rag-api-key')).toBeAttached();
     await expect(page.locator('#save-settings')).toBeAttached();
   });
 

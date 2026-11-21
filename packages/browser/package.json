@@ -11,7 +11,6 @@
     "check:bundle-budget": "node scripts/check-bundle-budgets.mjs"
   },
   "dependencies": {
-    "@hanzo/ai": "catalog:",
     "@hanzo/data": "catalog:",
     "@hanzo/event": "catalog:",
     "@hanzo/gui": "catalog:",

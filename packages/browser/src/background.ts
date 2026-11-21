@@ -7,20 +7,14 @@
 // this global so importing it once at the entrypoint is enough.
 import 'webextension-polyfill';
 
-import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
+import type { ControlSession } from './shared/types.js';
 import { startZap } from './shared/zap.js';
 import { startAgent } from './shared/agent.js';
 import { startSource } from './shared/source.js';
 import {
-  getRagConfig as getSharedRagConfig,
-  normalizeRagSnippets,
-  queryRagFromEndpoint,
-} from './shared/rag.js';
-import {
   IAM_API_URL, IAM_LOGIN_URL, IAM_API_PATH, API_BASE_URL,
   DEFAULT_MCP_PORT as CFG_MCP_PORT,
   DEFAULT_CDP_PORT as CFG_CDP_PORT,
-  DEFAULT_RAG_TOP_K as CFG_RAG_TOP_K,
   MODEL_CACHE_TTL_MS as CFG_MODEL_CACHE_TTL,
   LOCAL_PROVIDER_DEFAULTS,
   loadRuntimeConfig,
@@ -38,9 +32,9 @@ import { defaultWebMCPTracker, injectWebMCPOnCommitted } from './shared/webmcp.j
 import { unwrapEvaluateResult } from './shared/tab-id.js';
 import * as auth from './auth';
 import { fetchAllUsage } from './shared/usage.js';
-import { getChatGptSession, getChatGptUsage, executeInvisibleChatGpt } from './shared/chatgpt-web.js';
+import { getChatGptSession, getChatGptUsage } from './shared/chatgpt-web.js';
 import { discoverLocalNodes } from './shared/local-discovery.js';
-import { listModels, chatCompletion, ChatMessage } from './chat-client';
+import { listModels } from './chat-client';
 import { PageMonitor } from './page-monitor';
 import {
   runAccessibilityAudit,
@@ -69,17 +63,11 @@ import {
 } from './model-hub';
 import {
   ActionRateLimiter,
-  CHAT_BUDGETS,
-  InFlightRequestDeduper,
   debugLog,
-  estimateTextTokens,
   isLegacyModel,
   loadDebugFlagFromStorage,
-  makeChatRequestKey,
-  pickModelForTokenBudget,
   readUsageMetrics,
   recordUsageDelta,
-  trimMessagesToBudget,
 } from './runtime-guard';
 
 // Initialize browser control
@@ -138,7 +126,6 @@ const controlSession: ControlSession = {
 // Default ports (overridable via chrome.storage.local settings).
 const DEFAULT_MCP_PORT = CFG_MCP_PORT;
 const DEFAULT_CDP_PORT = CFG_CDP_PORT;
-const DEFAULT_RAG_TOP_K = CFG_RAG_TOP_K;
 const MODEL_CACHE_TTL_MS = CFG_MODEL_CACHE_TTL;
 
 let cachedModels: { at: number; models: Array<{ id: string; name?: string; description?: string; owned_by?: string }> } = {
@@ -146,8 +133,6 @@ let cachedModels: { at: number; models: Array<{ id: string; name?: string; descr
   models: [],
 };
 
-const inFlightChatRequests = new InFlightRequestDeduper<string>();
-const senderRequestGeneration = new Map<string, number>();
 const controlMessageLimiter = new ActionRateLimiter();
 const controlMessageSignatures = new Map<string, string>();
 
@@ -161,26 +146,6 @@ async function getPortConfig(): Promise<{ mcpPort: number; cdpPort: number }> {
       });
     });
   });
-}
-
-function getRagConfig() {
-  return getSharedRagConfig(chrome.storage.local);
-}
-
-function getSenderKey(sender: chrome.runtime.MessageSender): string {
-  const tabPart = sender.tab?.id !== undefined ? String(sender.tab.id) : 'sidepanel';
-  const urlPart = sender.url || sender.origin || 'unknown';
-  return `${sender.id || 'local'}:${tabPart}:${urlPart}`;
-}
-
-function bumpSenderGeneration(key: string): number {
-  const next = (senderRequestGeneration.get(key) || 0) + 1;
-  senderRequestGeneration.set(key, next);
-  return next;
-}
-
-function isSenderGenerationCurrent(key: string, generation: number): boolean {
-  return senderRequestGeneration.get(key) === generation;
 }
 
 const CORE_CLOUD_MODELS: Array<{ id: string; name: string; description: string; owned_by: string; family?: string }> = [
@@ -742,46 +707,6 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
       }
       break;
 
-    case 'rag.query':
-      try {
-        const config = await getRagConfig();
-        const topKInput = Number.parseInt(String(request.topK ?? config.topK), 10);
-        const token = await auth.getValidAccessToken().catch(() => '');
-        const params: RagQueryParams = {
-          query: String(request.query || '').trim(),
-          topK: Number.isFinite(topKInput) ? Math.max(1, Math.min(topKInput, 20)) : DEFAULT_RAG_TOP_K,
-          knowledgeBase: String(request.knowledgeBase ?? config.knowledgeBase ?? 'hanzo-cloud').trim(),
-          includeTabContext: request.includeTabContext !== undefined
-            ? !!request.includeTabContext
-            : config.includeTabContext,
-          endpoint: String(request.endpoint || config.endpoint || 'https://api.hanzo.ai/v1/search').trim(),
-          apiKey: String(token || request.apiKey || config.apiKey || '').trim(),
-          pageContext: request.pageContext && typeof request.pageContext === 'object'
-            ? {
-                url: request.pageContext.url ? String(request.pageContext.url) : undefined,
-                title: request.pageContext.title ? String(request.pageContext.title) : undefined,
-              }
-            : undefined,
-        };
-
-        if (!params.query) {
-          sendResponse({ success: false, error: 'Query is required' });
-          break;
-        }
-
-        const snippets = await queryRagFromEndpoint(params);
-        const source = snippets.length ? (snippets.some(s => s.source === 'hanzo-cloud') ? 'hanzo-cloud' : 'tab-context') : 'none';
-
-        sendResponse({
-          success: true,
-          source,
-          snippets: snippets.slice(0, params.topK),
-        });
-      } catch (error: any) {
-        sendResponse({ success: false, error: error.message });
-      }
-      break;
-
     // --- Cloud Chat ---
     case 'chat.listModels':
       try {
@@ -790,170 +715,6 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
         const models = await listModelsCached(token || undefined);
         sendResponse({ success: true, models });
       } catch (error: any) {
-        sendResponse({ success: false, error: error.message });
-      }
-      break;
-
-    case 'chat.cancel': {
-      const senderKey = getSenderKey(sender);
-      bumpSenderGeneration(senderKey);
-      await recordUsageDelta({ canceledRequests: 1 });
-      sendResponse({ success: true });
-      break;
-    }
-
-    case 'chat.complete':
-      try {
-        const senderKey = getSenderKey(sender);
-        const requestedModel = String(request.model || 'auto');
-        const messagesInput = Array.isArray(request.messages) ? request.messages : [];
-        const rawMessages: ChatMessage[] = messagesInput
-          .filter((msg: any) => msg && typeof msg.content === 'string' && typeof msg.role === 'string')
-          .map((msg: any) => ({
-            role: (msg.role === 'system' || msg.role === 'assistant') ? msg.role : 'user',
-            content: String(msg.content),
-          }));
-
-        const budgeted = trimMessagesToBudget(rawMessages, {
-          maxMessages: CHAT_BUDGETS.maxMessages,
-          maxInputTokens: CHAT_BUDGETS.maxInputTokens,
-        });
-
-        if (!budgeted.messages.length) {
-          sendResponse({ success: false, error: 'messages are required' });
-          break;
-        }
-
-        // 1. ChatGPT Web (Invisible Temporary Chat using active Plus session)
-        if (requestedModel === 'chatgpt-web' || requestedModel.startsWith('chatgpt')) {
-          const prompt = budgeted.messages[budgeted.messages.length - 1]?.content || '';
-          const content = await executeInvisibleChatGpt(prompt, budgeted.messages);
-          await recordUsageDelta({
-            chatRequests: 1,
-            inputTokens: budgeted.inputTokens,
-            outputTokens: estimateTextTokens(content),
-          });
-          sendResponse({
-            success: true,
-            content,
-            model: 'chatgpt-web',
-            budget: { inputTokens: budgeted.inputTokens, droppedMessages: 0 },
-          });
-          break;
-        }
-
-        // 2. WebGPU in-browser private model
-        if (requestedModel === 'webgpu') {
-          const prompt = budgeted.messages[budgeted.messages.length - 1]?.content || '';
-          const res = await webgpuAI.generate(prompt);
-          await recordUsageDelta({
-            chatRequests: 1,
-            inputTokens: budgeted.inputTokens,
-            outputTokens: estimateTextTokens(res.text),
-          });
-          sendResponse({
-            success: true,
-            content: res.text,
-            model: 'webgpu',
-            budget: { inputTokens: budgeted.inputTokens, droppedMessages: 0 },
-          });
-          break;
-        }
-
-        // 3. Local GPU pool (Spark / Evo)
-        if (requestedModel === 'hanzo-spark' || requestedModel === 'hanzo-evo') {
-          const url = requestedModel === 'hanzo-spark' ? 'http://10.0.0.19:1235/v1' : 'http://10.0.0.21:1234/v1';
-          const localRes = await fetch(`${url}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: requestedModel === 'hanzo-spark' ? 'zen6-spark' : 'zen6-evo',
-              messages: budgeted.messages,
-              temperature: typeof request.temperature === 'number' ? request.temperature : undefined,
-              max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : undefined,
-            }),
-          });
-          if (localRes.ok) {
-            const data = await localRes.json();
-            const content = data.choices?.[0]?.message?.content || '';
-            await recordUsageDelta({
-              chatRequests: 1,
-              inputTokens: budgeted.inputTokens,
-              outputTokens: estimateTextTokens(content),
-            });
-            sendResponse({
-              success: true,
-              content,
-              model: requestedModel,
-              budget: { inputTokens: budgeted.inputTokens, droppedMessages: 0 },
-            });
-            break;
-          }
-        }
-
-        // 4. Hanzo Cloud models (require valid IAM session)
-        const token = await auth.getValidAccessToken();
-        if (!token) {
-          sendResponse({ success: false, error: 'Not authenticated with Hanzo IAM' });
-          break;
-        }
-
-        let availableModelIds = getCachedModelIds();
-        if (!availableModelIds.length) {
-          availableModelIds = (await listModelsCached(token)).map((m) => m.id);
-        }
-        const model = pickModelForTokenBudget(requestedModel, availableModelIds, budgeted.inputTokens);
-        const temperature = typeof request.temperature === 'number' ? request.temperature : undefined;
-        const maxTokens = typeof request.max_tokens === 'number'
-          ? Math.max(64, Math.min(request.max_tokens, CHAT_BUDGETS.maxOutputTokens))
-          : CHAT_BUDGETS.maxOutputTokens;
-
-        const storedOrg = await chrome.storage.local.get(['activeOrgId']);
-        const orgId = typeof request.orgId === 'string' && request.orgId
-          ? request.orgId
-          : (typeof storedOrg.activeOrgId === 'string' && storedOrg.activeOrgId ? storedOrg.activeOrgId : undefined);
-        const requestKey = makeChatRequestKey(model, budgeted.messages, temperature, maxTokens);
-        const { promise, deduped } = inFlightChatRequests.getOrCreate(requestKey, async () => chatCompletion(token, {
-          model,
-          messages: budgeted.messages,
-          temperature,
-          max_tokens: maxTokens,
-          orgId,
-        }));
-        const generation = deduped
-          ? (senderRequestGeneration.get(senderKey) || 0)
-          : bumpSenderGeneration(senderKey);
-
-        if (deduped) {
-          await recordUsageDelta({ dedupeHits: 1 });
-          debugLog('[Hanzo] Deduped in-flight chat request');
-        }
-
-        const content = await promise;
-
-        if (!isSenderGenerationCurrent(senderKey, generation)) {
-          await recordUsageDelta({ canceledRequests: 1 });
-          sendResponse({ success: false, error: 'Chat request superseded by a newer request' });
-          break;
-        }
-
-        await recordUsageDelta({
-          chatRequests: 1,
-          inputTokens: budgeted.inputTokens,
-          outputTokens: estimateTextTokens(content),
-        });
-
-        sendResponse({
-          success: true,
-          content,
-          model,
-          budget: {
-            inputTokens: budgeted.inputTokens,
-            droppedMessages: budgeted.droppedMessages,
-          },
-        });
-      } catch (error: any) {
-        await recordUsageDelta({ errors: 1 });
         sendResponse({ success: false, error: error.message });
       }
       break;
@@ -2026,6 +1787,7 @@ const zap = startZap({
 const agent = startAgent({
   api: chrome,
   token: () => auth.getValidAccessToken().then((t) => t ?? undefined),
+  record: recordUsageDelta,
 });
 
 // 3. The linked source: this browser as a source of kind "browser" (HIP-1350).

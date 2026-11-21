@@ -114,10 +114,6 @@ export const DEFAULT_MCP_PORT = 3001;
 export const DEFAULT_CDP_PORT = 9223;
 export const DEFAULT_CDP_BRIDGE_PORT = 9224;
 
-// ── RAG defaults ───────────────────────────────────────────────────────
-
-export const DEFAULT_RAG_TOP_K = 5;
-
 // ── Cache / Timing ─────────────────────────────────────────────────────
 
 export const MODEL_CACHE_TTL_MS = 60 * 1000;

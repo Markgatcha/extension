@@ -28,7 +28,6 @@ describe('the answer rail', () => {
   it('opens collapsed', () => {
     const html = markup(
       React.createElement(AnswerEngine, {
-        apiBase: 'https://api.hanzo.ai',
         getToken: async () => null,
         signIn: () => {},
       }),
