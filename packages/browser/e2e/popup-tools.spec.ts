@@ -1,12 +1,13 @@
 import { test, expect } from './fixtures';
 
 /**
- * E2E tests for popup tool buttons added in v1.7.32.
- * Validates: Selector, Screenshot, Page Info, A11y Audit, Perf Audit, Console.
+ * E2E tests for the popup's tools: Selector, Screenshot, Page Info, A11y Audit,
+ * Perf Audit, Console. They live in settings, and each can be pinned to the
+ * chat view.
  */
 
 test.describe('Popup Tools', () => {
-  test('tool buttons are visible in main section', async ({ context, extensionId }) => {
+  test('tool buttons are in the popup', async ({ context, extensionId }) => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.waitForTimeout(500);
@@ -38,13 +39,14 @@ test.describe('Popup Tools', () => {
     await expect(page.locator('#tool-console')).toBeAttached();
   });
 
-  test('tools grid uses 3-column layout', async ({ context, extensionId }) => {
+  test('every tool can be pinned', async ({ context, extensionId }) => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.waitForTimeout(500);
 
-    const grid = page.locator('.tools-btn-grid');
-    await expect(grid).toBeAttached();
+    for (const id of ['picker', 'screenshot', 'pageinfo', 'a11y', 'perf', 'console', 'answer']) {
+      await expect(page.locator(`#sec-tools [data-pin="${id}"]`)).toBeAttached();
+    }
   });
 
   test('screenshot tool captures visible tab', async ({ context, extensionId }) => {
@@ -83,6 +85,7 @@ test.describe('Popup Tools', () => {
     // tool.picker.start. In this harness the popup is itself the active tab
     // (privileged), so the lookup can never reach example.com — send the
     // same message the button sends, explicitly targeted.
+    await popup.locator('#open-settings').click();
     const pickerBtn = popup.locator('#tool-picker');
     await expect(pickerBtn).toBeVisible();
     await popup.evaluate(async () => {
@@ -121,6 +124,7 @@ test.describe('Popup Tools', () => {
 
     // Same active-tab harness limitation as the picker test above — send
     // the message #tool-console sends, explicitly targeted.
+    await popup.locator('#open-settings').click();
     const consoleBtn = popup.locator('#tool-console');
     await expect(consoleBtn).toBeVisible();
     await popup.evaluate(async () => {

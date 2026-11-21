@@ -9,6 +9,7 @@ import 'webextension-polyfill';
 
 import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
 import { startZap } from './shared/zap.js';
+import { startAgent } from './shared/agent.js';
 import {
   getRagConfig as getSharedRagConfig,
   normalizeRagSnippets,
@@ -405,6 +406,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function handleMessage(request: any, sender: chrome.runtime.MessageSender, sendResponse: Function) {
   // --- ZAP: status and pairing (shared/zap.ts) ---
   if (typeof request.action === 'string' && zap.handle(request.action, request, sendResponse as (r: any) => void)) return;
+  if (typeof request.action === 'string' && agent.handle(request.action, request, sendResponse as (r: any) => void, sender)) return;
 
   if (typeof request.action === 'string' && LASTPASS_METHODS.has(request.action)) {
     try {
@@ -2016,6 +2018,12 @@ const zap = startZap({
   dispatch: browserDispatch,
   log: debugLog,
   storage: chrome.storage.local,
+});
+
+// 2. The chat that acts in the page: one thread, run here so it outlives the popup.
+const agent = startAgent({
+  api: chrome,
+  token: () => auth.getValidAccessToken().then((t) => t ?? undefined),
 });
 
 // Keep-alive — Layer 1: Port. Content scripts in every loaded http(s) tab

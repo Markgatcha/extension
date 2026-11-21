@@ -19,6 +19,7 @@ import 'webextension-polyfill';
 
 import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
 import { startZap } from './shared/zap.js';
+import { startAgent } from './shared/agent.js';
 import { fetchAllUsage } from './shared/usage.js';
 import {
   getRagConfig,
@@ -1640,6 +1641,9 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
     if (typeof request.action === 'string' && zap.handle(request.action, request, sendResponse)) {
       return;
     }
+    if (typeof request.action === 'string' && agent.handle(request.action, request, sendResponse, sender)) {
+      return;
+    }
 
     switch (request.action) {
       // Snapshot → ref engine, for the extension's own pages
@@ -2725,6 +2729,12 @@ const zap = startZap({
   dispatch: browserDispatch,
   log: console.log,
   storage: browser.storage.local,
+});
+
+// The chat that acts in the page: one thread, run here so it outlives the popup.
+const agent = startAgent({
+  api: browser,
+  token: () => getValidAccessToken().then((t) => t ?? undefined),
 });
 
 // =============================================================================

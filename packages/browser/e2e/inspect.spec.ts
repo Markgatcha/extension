@@ -36,12 +36,17 @@ async function picked(context: any) {
 }
 
 test.describe('Inspect', () => {
-  test('the tools are on the popup’s first tab', async ({ context, extensionId }) => {
+  test('the tools are in settings, and a pin brings one to the chat view', async ({ context, extensionId }) => {
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-    await expect(popup.locator('#tab-chat #tool-picker')).toBeVisible();
-    await expect(popup.locator('#tab-chat #tool-screenshot')).toBeVisible();
+    await expect(popup.locator('#tool-picker')).toBeHidden();
+    await popup.locator('#open-settings').click();
+    await expect(popup.locator('#sec-tools #tool-picker')).toBeVisible();
+    await expect(popup.locator('#sec-tools #tool-screenshot')).toBeVisible();
     await expect(popup.locator('#tool-picker')).toContainText('Inspect');
+    await popup.locator('[data-pin="picker"]').click();
+    await popup.locator('#back-btn').click();
+    await expect(popup.locator('#pins .pin-chip')).toHaveText(['Inspect']);
   });
 
   test('a shortcut pick reaches the agent with its React source', async ({ context, extensionId }) => {

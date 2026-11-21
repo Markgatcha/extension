@@ -15,6 +15,8 @@ import {
   type Shortcut,
 } from './shared/shortcut.js';
 import { getConsent, setConsent, capture } from './shared/consent.js';
+import { renderMarkdown } from './shared/markdown.js';
+import type { AgentState } from './shared/agent.js';
 
 declare const browser: typeof chrome & {
   sidebarAction?: {
@@ -42,28 +44,55 @@ document.addEventListener('DOMContentLoaded', () => {
   const modelBadge = document.getElementById('model-badge');
   const modelDropdown = document.getElementById('model-dropdown');
 
+  // The models the agent can drive a page with: gateway models that call tools.
   const MODEL_LABELS: Record<string, string> = {
     'enso': 'Enso',
     'zen6': 'Zen 6',
     'zen6-flash': 'Zen 6 Flash',
     'zen6-coder': 'Zen 6 Coder',
     'zen6-max': 'Zen 6 Max',
-    'zen-vl': 'Zen VL',
-    'kai': 'Kai',
-    'auto': 'Auto',
-    'chatgpt-web': 'ChatGPT Web',
-    'claude-web': 'Claude Web',
-    'hanzo-spark': 'Spark GB10',
-    'hanzo-evo': 'Evo Halo',
-    'hanzo-desktop': 'Desktop',
-    'webgpu': 'WebGPU',
   };
 
+  // A stored choice from the old picker (Kai, ChatGPT Web, a local node) cannot call tools.
   const normalizeModelId = (id?: string): string => {
     const raw = (id || '').trim();
-    if (!raw || /^(zen[45]|qwen2)/i.test(raw)) return 'enso';
-    return raw;
+    return raw in MODEL_LABELS ? raw : 'enso';
   };
+
+  interface Feature {
+    id: string;
+    label: string;
+    /** A tool runs on the page; a panel is a section of settings. */
+    kind: 'tool' | 'panel';
+    section?: string;
+  }
+  const FEATURES: Feature[] = [
+    { id: 'picker', label: 'Inspect', kind: 'tool' },
+    { id: 'screenshot', label: 'Screenshot', kind: 'tool' },
+    { id: 'pageinfo', label: 'Page Info', kind: 'tool' },
+    { id: 'a11y', label: 'A11y Audit', kind: 'tool' },
+    { id: 'perf', label: 'Performance', kind: 'tool' },
+    { id: 'console', label: 'Console', kind: 'tool' },
+    { id: 'answer', label: 'Answer Engine', kind: 'tool' },
+    { id: 'accounts', label: 'Accounts & usage', kind: 'panel', section: 'sec-accounts' },
+    { id: 'bridges', label: 'Bridges', kind: 'panel', section: 'sec-bridges' },
+  ];
+
+  function showMain() {
+    settingsSection?.classList.add('hidden');
+    mainSection?.classList.remove('hidden');
+  }
+
+  function showSettings(sectionId?: string) {
+    mainSection?.classList.add('hidden');
+    settingsSection?.classList.remove('hidden');
+    loadSettings();
+    const section = sectionId ? document.getElementById(sectionId) as HTMLDetailsElement | null : null;
+    if (section) {
+      section.open = true;
+      section.scrollIntoView({ block: 'nearest' });
+    }
+  }
 
   function updateSelectedModel(modelId: string) {
     const next = normalizeModelId(modelId);
@@ -175,31 +204,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Top Nav Tabs
-  const navTabs = document.querySelectorAll('.nav-tab-btn');
-  const tabPanes = document.querySelectorAll('.tab-pane');
-
-  navTabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const targetId = tab.getAttribute('data-tab');
-      navTabs.forEach((t) => t.classList.remove('active'));
-      tabPanes.forEach((p) => p.classList.add('hidden'));
-
-      tab.classList.add('active');
-      const targetPane = document.getElementById(targetId || '');
-      if (targetPane) {
-        targetPane.classList.remove('hidden');
-      }
-
-      if (targetId === 'tab-accounts') {
-        loadUsage();
-        refreshConnectedAccounts();
-      } else if (targetId === 'tab-bridges') {
-        refreshStatus();
-      }
-    });
-  });
-
   // Auth
   const loginBtn = document.getElementById('login-btn');
   const logoutBtn = document.getElementById('logout-btn');
@@ -252,8 +256,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Auth via background ---
   function checkAuth() {
-    // Always show main section and status (tools work without login)
-    mainSection.classList.remove('hidden');
+    // The chat view is there signed out too; only status and the sign-in
+    // banner follow the session. Which view is showing is not this function's call.
     refreshStatus();
 
     chrome.runtime.sendMessage({ action: 'auth.status' }, (response) => {
@@ -316,53 +320,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   } catch {}
 
-  // --- Active Tab Context & Inline Ask/Search ---
-  let activeTabInfo: { id?: number; title?: string; url?: string } | null = null;
-  let pageContextActive = true;
+  // --- The thread ---
+  // The agent lives in the background so it outlives this popup; this page
+  // follows it on a port and draws the thread it is sent.
   const tabContextTitle = document.getElementById('tab-context-title');
-  const toggleContextBtn = document.getElementById('toggle-context-btn');
-  const composerAttachBtn = document.getElementById('composer-attach-btn');
   const askBtn = document.getElementById('ask-btn') as HTMLButtonElement | null;
   const voiceMicBtn = document.getElementById('voice-mic-btn');
-
-  function syncPageContextUi() {
-    if (toggleContextBtn) {
-      toggleContextBtn.textContent = pageContextActive ? 'Active' : 'Off';
-      toggleContextBtn.style.opacity = pageContextActive ? '1' : '0.5';
-    }
-    const chip = document.getElementById('tab-context-chip');
-    if (chip) chip.style.opacity = pageContextActive ? '1' : '0.55';
-    composerAttachBtn?.setAttribute('data-active', pageContextActive ? 'true' : 'false');
-  }
+  const thread = document.getElementById('thread');
+  const threadEmpty = document.getElementById('thread-empty');
+  let activeTabId: number | undefined;
+  let busy = false;
+  let lastQuestion = '';
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (tab) {
-      activeTabInfo = { id: tab.id, title: tab.title, url: tab.url };
-      if (tabContextTitle) {
-        tabContextTitle.textContent = tab.title || tab.url || 'Active Tab';
-      }
+      activeTabId = tab.id;
+      if (tabContextTitle) tabContextTitle.textContent = tab.title || tab.url || 'Active Tab';
     }
-  });
-
-  toggleContextBtn?.addEventListener('click', () => {
-    pageContextActive = !pageContextActive;
-    syncPageContextUi();
-  });
-
-  composerAttachBtn?.addEventListener('click', () => {
-    pageContextActive = !pageContextActive;
-    syncPageContextUi();
   });
 
   const searchForm = document.getElementById('search-form') as HTMLFormElement | null;
   const searchInput = document.getElementById('search-input') as HTMLTextAreaElement | HTMLInputElement | null;
-  const searchWebBtn = document.getElementById('search-web-btn');
-  const inlineAnswer = document.getElementById('inline-answer');
-  const inlineAnswerContent = document.getElementById('inline-answer-content');
-  const copyInlineBtn = document.getElementById('copy-inline-btn');
-  const continueChatBtn = document.getElementById('continue-chat-btn');
-  const answerHeaderText = document.getElementById('answer-header-text');
 
   function resizeComposer() {
     if (!searchInput) return;
@@ -370,20 +349,105 @@ document.addEventListener('DOMContentLoaded', () => {
       searchInput.style.height = 'auto';
       searchInput.style.height = `${Math.min(searchInput.scrollHeight, 140)}px`;
     }
-    if (askBtn) {
-      askBtn.disabled = !searchInput.value.trim();
-    }
+    // While a turn runs the button stops it, so it stays pressable.
+    if (askBtn) askBtn.disabled = !busy && !searchInput.value.trim();
   }
   searchInput?.addEventListener('input', resizeComposer);
   resizeComposer();
 
-  popupNewThreadBtn?.addEventListener('click', () => {
+  function drawThread(state: AgentState) {
+    if (!thread) return;
+    busy = state.busy;
+    if (askBtn) {
+      askBtn.dataset.busy = String(busy);
+      askBtn.title = busy ? 'Stop' : 'Send (Enter)';
+      askBtn.setAttribute('aria-label', busy ? 'Stop' : 'Send');
+    }
+    resizeComposer();
+    if (threadEmpty) threadEmpty.classList.toggle('hidden', state.turns.length > 0);
+    thread.querySelectorAll('.msg').forEach((n) => n.remove());
+    const last = state.turns[state.turns.length - 1];
+    lastQuestion = [...state.turns].reverse().find((t) => t.role === 'user')?.content ?? '';
+    for (const turn of state.turns) {
+      const row = document.createElement('div');
+      row.className = `msg msg-${turn.role}`;
+      if (turn.error) {
+        row.className = 'msg msg-error';
+        row.textContent = turn.error;
+        if (/sign in/i.test(turn.error)) {
+          loginSection?.classList.remove('hidden');
+        } else if (lastQuestion) {
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'msg-retry';
+          retry.textContent = 'Retry';
+          retry.addEventListener('click', () => ask(lastQuestion));
+          row.appendChild(retry);
+        }
+      } else if (turn.role === 'assistant') {
+        row.innerHTML = renderMarkdown(turn.content);
+      } else if (turn.role === 'step') {
+        row.innerHTML = '<span class="step-dot"></span>';
+        row.appendChild(document.createTextNode(turn.content));
+      } else {
+        row.textContent = turn.content;
+      }
+      thread.appendChild(row);
+    }
+    if (state.busy && last?.role !== 'step') {
+      const row = document.createElement('div');
+      row.className = 'msg msg-step working';
+      row.innerHTML = '<span class="step-dot"></span>Working…';
+      thread.appendChild(row);
+    }
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  function ask(text: string) {
+    const q = text.trim();
+    if (!q || busy) return;
     if (searchInput) searchInput.value = '';
     resizeComposer();
-    inlineAnswer?.classList.add('hidden');
-    if (inlineAnswerContent) inlineAnswerContent.textContent = '';
-    settingsSection?.classList.add('hidden');
-    mainSection?.classList.remove('hidden');
+    chrome.storage.local.get(['hanzo_selected_model'], (res) => {
+      chrome.runtime.sendMessage(
+        { action: 'agent.send', text: q, model: normalizeModelId(res.hanzo_selected_model), tabId: activeTabId, orgId: activeOrgId || undefined },
+        (resp) => {
+          if (chrome.runtime.lastError || !resp?.success) {
+            // Not a turn of the thread: say it where the thread is, and leave the thread be.
+            const row = document.createElement('div');
+            row.className = 'msg msg-error';
+            row.textContent = resp?.error || chrome.runtime.lastError?.message || 'The agent is not running.';
+            thread?.appendChild(row);
+            if (thread) thread.scrollTop = thread.scrollHeight;
+          }
+        },
+      );
+    });
+  }
+
+  function stop() {
+    chrome.runtime.sendMessage({ action: 'agent.stop' }, () => void chrome.runtime.lastError);
+  }
+
+  // The thread arrives once on connect and again after every change. A worker
+  // stopped under the popup closes the port; connecting again wakes it.
+  function follow() {
+    const port = chrome.runtime.connect({ name: 'agent' });
+    port.onMessage.addListener((m) => {
+      if (m?.action === 'agent.update') drawThread(m.state as AgentState);
+    });
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
+      setTimeout(follow, 500);
+    });
+  }
+  follow();
+
+  popupNewThreadBtn?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'agent.reset' }, () => void chrome.runtime.lastError);
+    if (searchInput) searchInput.value = '';
+    resizeComposer();
+    showMain();
     searchInput?.focus();
   });
 
@@ -435,72 +499,10 @@ document.addEventListener('DOMContentLoaded', () => {
     window.close();
   }
 
-  searchWebBtn?.addEventListener('click', () => {
-    const q = searchInput?.value.trim() || '';
-    openSearch(q);
-  });
-
-  async function handleAskAi(prompt: string) {
-    if (!prompt.trim()) return;
-    if (inlineAnswer) inlineAnswer.classList.remove('hidden');
-    if (inlineAnswerContent) inlineAnswerContent.textContent = 'Thinking…';
-    if (answerHeaderText) answerHeaderText.textContent = 'Generating answer…';
-
-    let fullPrompt = prompt;
-    if (pageContextActive && activeTabInfo?.url) {
-      fullPrompt = `[Page Context: "${activeTabInfo.title || ''}" (${activeTabInfo.url})]\n${prompt}`;
-    }
-
-    try {
-      const selectedModel = await new Promise<string>((resolve) => {
-        chrome.storage.local.get(['hanzo_selected_model'], (res) => {
-          resolve(normalizeModelId(res.hanzo_selected_model || 'enso'));
-        });
-      });
-
-      chrome.runtime.sendMessage(
-        {
-          action: 'chat.complete',
-          model: selectedModel,
-          orgId: activeOrgId || undefined,
-          messages: [{ role: 'user', content: fullPrompt }],
-        },
-        (response) => {
-          if (chrome.runtime.lastError || !response?.success) {
-            const err = response?.error || chrome.runtime.lastError?.message || '';
-            if (err.includes('Not authenticated')) {
-              if (inlineAnswerContent) {
-                inlineAnswerContent.innerHTML = 'Sign in for cloud intelligence, or <a href="#" id="fallback-search-btn" style="color:var(--text-primary);text-decoration:underline;">Search Answer Engine →</a>';
-                document.getElementById('fallback-search-btn')?.addEventListener('click', (e) => {
-                  e.preventDefault();
-                  openSearch(prompt);
-                });
-              }
-              if (loginSection) loginSection.classList.remove('hidden');
-            } else {
-              if (inlineAnswerContent) {
-                inlineAnswerContent.textContent = response?.message?.content || response?.content || `Opening Answer Engine for "${prompt}"…`;
-                setTimeout(() => openSearch(prompt), 800);
-              }
-            }
-            if (answerHeaderText) answerHeaderText.textContent = 'Hanzo Response';
-            return;
-          }
-
-          const content = response.message?.content || response.content || 'Completed.';
-          if (inlineAnswerContent) inlineAnswerContent.textContent = content;
-          if (answerHeaderText) answerHeaderText.textContent = 'Hanzo Response';
-        }
-      );
-    } catch (err: any) {
-      if (inlineAnswerContent) inlineAnswerContent.textContent = `Error: ${err.message}`;
-    }
-  }
-
   searchForm?.addEventListener('submit', (e) => {
     e.preventDefault();
-    const prompt = searchInput?.value.trim();
-    if (prompt) handleAskAi(prompt);
+    if (busy) stop();
+    else ask(searchInput?.value ?? '');
   });
 
   searchInput?.addEventListener('keydown', (e: Event) => {
@@ -509,8 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const imeClaimed = ke.isComposing || ke.key === 'Process' || ke.keyCode === 229;
     if (ke.key === 'Enter' && !imeClaimed && (ke.metaKey || ke.ctrlKey || (!ke.shiftKey && !ke.altKey))) {
       ke.preventDefault();
-      const prompt = searchInput.value.trim();
-      if (prompt) handleAskAi(prompt);
+      if (!busy) ask(searchInput.value);
     }
   });
 
@@ -520,12 +521,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const cmdList = document.getElementById('cmd-palette-list');
   const commands: Array<{ label: string; hint?: string; run: () => void }> = [
     { label: 'New thread', hint: 'Clear', run: () => popupNewThreadBtn?.click() },
-    { label: 'Open Side Panel', hint: 'Panel', run: () => openPanel?.click() },
-    { label: 'Open New Tab Answer Engine', hint: 'Tab', run: () => openSearch(searchInput?.value.trim() || '') },
-    { label: 'Toggle Page Context', hint: '+', run: () => { pageContextActive = !pageContextActive; syncPageContextUi(); } },
-    { label: 'Inspect Element', hint: 'Tool', run: () => document.getElementById('tool-picker')?.click() },
-    { label: 'Capture Screenshot', hint: 'Tool', run: () => document.getElementById('tool-screenshot')?.click() },
-    { label: 'Settings', hint: 'Prefs', run: () => openSettings?.click() },
+    { label: 'Chat on the page', hint: 'Panel', run: () => openPanel?.click() },
+    { label: 'Open the answer engine', hint: 'Tab', run: () => openSearch(searchInput?.value.trim() || '') },
+    { label: 'Settings', hint: 'Prefs', run: () => showSettings() },
+    ...FEATURES.map((f) => ({ label: f.label, hint: f.kind === 'tool' ? 'Tool' : 'Settings', run: () => runFeature(f.id, null) })),
   ];
   let cmdActive = 0;
 
@@ -589,50 +588,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Quick Action Pills
+  // Suggestions in an empty thread
   document.querySelectorAll('.quick-pill').forEach((pill) => {
     pill.addEventListener('click', () => {
       const p = pill.getAttribute('data-prompt');
-      if (p) {
-        if (searchInput) searchInput.value = p;
-        handleAskAi(p);
-      }
+      if (p) ask(p);
     });
-  });
-
-  // Copy Answer
-  copyInlineBtn?.addEventListener('click', () => {
-    if (inlineAnswerContent?.textContent) {
-      navigator.clipboard.writeText(inlineAnswerContent.textContent).then(() => {
-        const span = copyInlineBtn.querySelector('span');
-        if (span) {
-          const prev = span.textContent;
-          span.textContent = 'Copied!';
-          setTimeout(() => { span.textContent = prev; }, 1500);
-        }
-      });
-    }
-  });
-
-  // Continue in Full Chat
-  continueChatBtn?.addEventListener('click', () => {
-    openSidebarTab();
-  });
-
-  // Open in New Tab
-  document.getElementById('open-newtab-btn')?.addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('newtab.html') });
-    window.close();
-  });
-
-  // Settings Drawer Toggle
-  openSettings?.addEventListener('click', () => {
-    settingsSection?.classList.remove('hidden');
-    mainSection?.classList.add('hidden');
-  });
-  backBtn?.addEventListener('click', () => {
-    settingsSection?.classList.add('hidden');
-    mainSection?.classList.remove('hidden');
   });
 
   // --- Open chat ---
@@ -914,16 +875,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- Settings ---
-  openSettings?.addEventListener('click', () => {
-    mainSection.classList.add('hidden');
-    settingsSection.classList.remove('hidden');
-    loadSettings();
-  });
-
-  backBtn?.addEventListener('click', () => {
-    settingsSection.classList.add('hidden');
-    mainSection.classList.remove('hidden');
-  });
+  openSettings?.addEventListener('click', () => showSettings());
+  backBtn?.addEventListener('click', showMain);
 
   function loadSettings() {
     chrome.storage.local.get(['mcpPort', 'cdpPort'], (result) => {
@@ -946,12 +899,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let recordingHandler: ((e: KeyboardEvent) => void) | null = null;
 
   async function refreshShortcutDisplay() {
-    const display = document.getElementById('inspect-shortcut-display');
-    const settingsDisplay = document.getElementById('inspect-shortcut-current');
+    const display = document.getElementById('inspect-shortcut-current');
     const s = await loadInspectShortcut(chrome.storage.local as any);
-    const text = formatShortcut(s);
-    if (display) display.textContent = text;
-    if (settingsDisplay) settingsDisplay.textContent = text;
+    if (display) display.textContent = formatShortcut(s);
   }
   // Initial render before settings panel is opened (header chip).
   refreshShortcutDisplay();
@@ -985,11 +935,6 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshShortcutDisplay();
   }
 
-  document.getElementById('record-inspect-shortcut')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    const display = document.getElementById('inspect-shortcut-display');
-    if (display) startRecording(display);
-  });
   document.getElementById('inspect-shortcut-record')?.addEventListener('click', (e) => {
     e.preventDefault();
     const display = document.getElementById('inspect-shortcut-current');
@@ -1103,145 +1048,219 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Element Picker / Selector tool
-  const toolPicker = document.getElementById('tool-picker');
-  toolPicker?.addEventListener('click', async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showToolFeedback(toolPicker, 'No page');
-      return;
-    }
-    // Send message to content script to start picker mode
-    chrome.tabs.sendMessage(tab.id, { action: 'tool.picker.start' }, (response) => {
-      if (chrome.runtime.lastError || !response?.success) {
-        showToolFeedback(toolPicker, 'N/A');
+  // Each tool takes the button that was pressed — the one in settings or the
+  // pinned chip — so its feedback lands where the person is looking.
+  const RUN: Record<string, (btn: HTMLElement) => Promise<void>> = {
+    // Element Picker / Selector tool
+    async picker(btn) {
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        showToolFeedback(btn, 'No page');
         return;
       }
-      showToolFeedback(toolPicker, 'Pick...');
-      // Close popup so user can interact with the page
-      setTimeout(() => window.close(), 400);
-    });
-  });
-
-  // Screenshot tool
-  const toolScreenshot = document.getElementById('tool-screenshot');
-  toolScreenshot?.addEventListener('click', async () => {
-    toolScreenshot.setAttribute('disabled', 'true');
-    try {
-      chrome.tabs.captureVisibleTab(null as any, { format: 'png' }, (dataUrl) => {
-        if (chrome.runtime.lastError || !dataUrl) {
-          showToolFeedback(toolScreenshot, 'Failed');
-          toolScreenshot.removeAttribute('disabled');
+      // Send message to content script to start picker mode
+      chrome.tabs.sendMessage(tab.id, { action: 'tool.picker.start' }, (response) => {
+        if (chrome.runtime.lastError || !response?.success) {
+          showToolFeedback(btn, 'N/A');
           return;
         }
-        // Copy to clipboard as image
-        fetch(dataUrl)
-          .then(r => r.blob())
-          .then(blob => {
-            const item = new ClipboardItem({ 'image/png': blob });
-            return navigator.clipboard.write([item]);
-          })
-          .then(() => {
-            showToolFeedback(toolScreenshot, 'Copied!');
-          })
-          .catch(() => {
-            // Fallback: open in new tab
-            chrome.tabs.create({ url: dataUrl });
-            showToolFeedback(toolScreenshot, 'Opened');
-          })
-          .finally(() => {
-            toolScreenshot.removeAttribute('disabled');
-          });
+        showToolFeedback(btn, 'Pick...');
+        // Close popup so user can interact with the page
+        setTimeout(() => window.close(), 400);
       });
-    } catch {
-      showToolFeedback(toolScreenshot, 'Error');
-      toolScreenshot.removeAttribute('disabled');
-    }
-  });
+    },
 
-  // Page Info tool
-  const toolPageInfo = document.getElementById('tool-pageinfo');
-  toolPageInfo?.addEventListener('click', async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showToolFeedback(toolPageInfo, 'No page');
-      return;
-    }
-    chrome.tabs.sendMessage(tab.id, { action: 'tool.pageinfo' }, (response) => {
-      if (chrome.runtime.lastError || !response?.success) {
-        // Fallback: basic info from tab object
-        const info = `Title: ${tab.title}\nURL: ${tab.url}`;
-        navigator.clipboard.writeText(info).then(() => {
-          showToolFeedback(toolPageInfo, 'Copied!');
+    // Screenshot tool
+    async screenshot(btn) {
+      btn.setAttribute('disabled', 'true');
+      try {
+        chrome.tabs.captureVisibleTab(null as any, { format: 'png' }, (dataUrl) => {
+          if (chrome.runtime.lastError || !dataUrl) {
+            showToolFeedback(btn, 'Failed');
+            btn.removeAttribute('disabled');
+            return;
+          }
+          // Copy to clipboard as image
+          fetch(dataUrl)
+            .then(r => r.blob())
+            .then(blob => {
+              const item = new ClipboardItem({ 'image/png': blob });
+              return navigator.clipboard.write([item]);
+            })
+            .then(() => {
+              showToolFeedback(btn, 'Copied!');
+            })
+            .catch(() => {
+              // Fallback: open in new tab
+              chrome.tabs.create({ url: dataUrl });
+              showToolFeedback(btn, 'Opened');
+            })
+            .finally(() => {
+              btn.removeAttribute('disabled');
+            });
         });
+      } catch {
+        showToolFeedback(btn, 'Error');
+        btn.removeAttribute('disabled');
+      }
+    },
+
+    // Page Info tool
+    async pageinfo(btn) {
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        showToolFeedback(btn, 'No page');
         return;
       }
-      navigator.clipboard.writeText(response.info).then(() => {
-        showToolFeedback(toolPageInfo, 'Copied!');
-      }).catch(() => {
-        showToolFeedback(toolPageInfo, 'Failed');
+      chrome.tabs.sendMessage(tab.id, { action: 'tool.pageinfo' }, (response) => {
+        if (chrome.runtime.lastError || !response?.success) {
+          // Fallback: basic info from tab object
+          const info = `Title: ${tab.title}\nURL: ${tab.url}`;
+          navigator.clipboard.writeText(info).then(() => {
+            showToolFeedback(btn, 'Copied!');
+          });
+          return;
+        }
+        navigator.clipboard.writeText(response.info).then(() => {
+          showToolFeedback(btn, 'Copied!');
+        }).catch(() => {
+          showToolFeedback(btn, 'Failed');
+        });
       });
-    });
-  });
+    },
 
-  // Accessibility Audit tool
-  const toolA11y = document.getElementById('tool-accessibility');
-  toolA11y?.addEventListener('click', async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showToolFeedback(toolA11y, 'No page');
-      return;
-    }
-    toolA11y.setAttribute('disabled', 'true');
-    showToolFeedback(toolA11y, 'Running...');
-    chrome.runtime.sendMessage({ action: 'audit.accessibility', tabId: tab.id }, (response) => {
-      toolA11y.removeAttribute('disabled');
-      if (chrome.runtime.lastError || !response?.success) {
-        showToolFeedback(toolA11y, 'Failed');
+    // Accessibility Audit tool
+    async a11y(btn) {
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        showToolFeedback(btn, 'No page');
         return;
       }
-      const count = response.issues?.length || 0;
-      showToolFeedback(toolA11y, count ? `${count} issues` : 'Clean!');
-    });
-  });
+      btn.setAttribute('disabled', 'true');
+      showToolFeedback(btn, 'Running...');
+      chrome.runtime.sendMessage({ action: 'audit.accessibility', tabId: tab.id }, (response) => {
+        btn.removeAttribute('disabled');
+        if (chrome.runtime.lastError || !response?.success) {
+          showToolFeedback(btn, 'Failed');
+          return;
+        }
+        const count = response.issues?.length || 0;
+        showToolFeedback(btn, count ? `${count} issues` : 'Clean!');
+      });
+    },
 
-  // Performance Audit tool
-  const toolPerf = document.getElementById('tool-performance');
-  toolPerf?.addEventListener('click', async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showToolFeedback(toolPerf, 'No page');
-      return;
-    }
-    toolPerf.setAttribute('disabled', 'true');
-    showToolFeedback(toolPerf, 'Running...');
-    chrome.runtime.sendMessage({ action: 'audit.performance', tabId: tab.id }, (response) => {
-      toolPerf.removeAttribute('disabled');
-      if (chrome.runtime.lastError || !response?.success) {
-        showToolFeedback(toolPerf, 'Failed');
+    // Performance Audit tool
+    async perf(btn) {
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        showToolFeedback(btn, 'No page');
         return;
       }
-      showToolFeedback(toolPerf, 'Done');
-    });
-  });
+      btn.setAttribute('disabled', 'true');
+      showToolFeedback(btn, 'Running...');
+      chrome.runtime.sendMessage({ action: 'audit.performance', tabId: tab.id }, (response) => {
+        btn.removeAttribute('disabled');
+        if (chrome.runtime.lastError || !response?.success) {
+          showToolFeedback(btn, 'Failed');
+          return;
+        }
+        showToolFeedback(btn, 'Done');
+      });
+    },
 
-  // Console tool — evaluate JS
-  const toolConsole = document.getElementById('tool-console');
-  toolConsole?.addEventListener('click', async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showToolFeedback(toolConsole, 'No page');
-      return;
-    }
-    // Send to content script to start an inline eval prompt
-    chrome.tabs.sendMessage(tab.id, { action: 'tool.console.start' }, (response) => {
-      if (chrome.runtime.lastError || !response?.success) {
-        showToolFeedback(toolConsole, 'N/A');
+    // Console tool — evaluate JS
+    async console(btn) {
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        showToolFeedback(btn, 'No page');
         return;
       }
-      showToolFeedback(toolConsole, 'Open');
-      setTimeout(() => window.close(), 400);
+      // Send to content script to start an inline eval prompt
+      chrome.tabs.sendMessage(tab.id, { action: 'tool.console.start' }, (response) => {
+        if (chrome.runtime.lastError || !response?.success) {
+          showToolFeedback(btn, 'N/A');
+          return;
+        }
+        showToolFeedback(btn, 'Open');
+        setTimeout(() => window.close(), 400);
+      });
+    },
+
+    // The answer engine in a new tab, with what is typed
+    async answer() {
+      openSearch(searchInput?.value.trim() || '');
+    },
+  };
+
+  // --- Features: settings holds them all; a pin keeps one on the chat view ---
+  const PIN_KEY = 'hanzo_pinned';
+  let pinned: string[] = [];
+
+  function runFeature(id: string, btn: HTMLElement | null) {
+    const feature = FEATURES.find((f) => f.id === id);
+    if (!feature) return;
+    if (feature.kind === 'panel') {
+      showSettings(feature.section);
+      return;
+    }
+    const el = btn ?? document.querySelector<HTMLElement>(`[data-tool="${id}"]`);
+    if (el) void RUN[id](el);
+  }
+
+  function drawPins() {
+    const bar = document.getElementById('pins');
+    if (bar) {
+      bar.replaceChildren(
+        ...pinned.flatMap((id) => {
+          const f = FEATURES.find((x) => x.id === id);
+          if (!f) return [];
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'pin-chip';
+          chip.dataset.feature = f.id;
+          chip.textContent = f.label;
+          return [chip];
+        }),
+      );
+      bar.classList.toggle('hidden', !bar.children.length);
+    }
+    document.querySelectorAll<HTMLElement>('.pin-btn').forEach((b) => {
+      const on = pinned.includes(b.dataset.pin ?? '');
+      b.setAttribute('aria-pressed', String(on));
+      b.title = on ? 'Unpin from chat view' : 'Pin to chat view';
     });
+  }
+
+  document.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    const pin = t.closest<HTMLElement>('[data-pin]');
+    if (pin) {
+      // A pin sits inside a section's summary: it must not open or close the section.
+      e.preventDefault();
+      e.stopPropagation();
+      const id = pin.dataset.pin as string;
+      pinned = pinned.includes(id) ? pinned.filter((x) => x !== id) : [...pinned, id];
+      chrome.storage.local.set({ [PIN_KEY]: pinned });
+      drawPins();
+      return;
+    }
+    const feature = t.closest<HTMLElement>('[data-feature], [data-tool]');
+    if (feature) runFeature((feature.dataset.feature ?? feature.dataset.tool) as string, feature);
+  });
+
+  chrome.storage.local.get([PIN_KEY], (res) => {
+    const saved = res[PIN_KEY];
+    pinned = Array.isArray(saved) ? saved.filter((id) => FEATURES.some((f) => f.id === id)) : [];
+    drawPins();
+  });
+
+  // A section loads what it shows when it opens, not when the popup does.
+  const onOpen: Record<string, () => void> = {
+    'sec-accounts': () => { loadUsage(); refreshConnectedAccounts(); },
+    'sec-bridges': () => refreshStatus(),
+  };
+  document.querySelectorAll<HTMLDetailsElement>('details.sec').forEach((d) => {
+    d.addEventListener('toggle', () => { if (d.open) onOpen[d.id]?.(); });
   });
 
   // --- AI Usage (Claude + Codex) — data fetched by the background context
@@ -1365,8 +1384,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadUsage();
     refreshConnectedAccounts();
   });
-  loadUsage();
-  refreshConnectedAccounts();
 
   // Init
   checkAuth();

@@ -15,6 +15,7 @@ import {
   type Shortcut,
 } from './shared/shortcut.js';
 import { estimateMessageTokens, pickModelForTokenBudget, zenModels } from './runtime-guard';
+import type { AgentState } from './shared/agent.js';
 
 interface SourceLocation {
   file: string;
@@ -847,13 +848,6 @@ const aiOverlay = (() => {
   return { show, hide, moveCursor, highlight, updateStatus };
 })();
 
-type OverlayChatRole = 'user' | 'assistant' | 'system';
-
-interface OverlayChatMessage {
-  role: OverlayChatRole;
-  content: string;
-}
-
 interface OverlayElementContext {
   selector: string;
   tag: string;
@@ -863,6 +857,8 @@ interface OverlayElementContext {
 
 type OverlayMode = 'overlay' | 'push';
 type OverlayWidth = 'compact' | 'default' | 'wide';
+
+const OVERLAY_INTRO = 'Ask about this page, or tell me what to do on it. Watch inspects elements; Edit changes text in place.';
 
 const OVERLAY_WIDTH_PX: Record<OverlayWidth, number> = {
   compact: 320,
@@ -881,7 +877,7 @@ class HanzoPageOverlay {
   private watchMode = false;
   private editMode = false;
   private modelsLoaded = false;
-  private messages: OverlayChatMessage[] = [];
+  private agent: chrome.runtime.Port | null = null;
   private selectedContext: OverlayElementContext | null = null;
   private hoveredElement: HTMLElement | null = null;
   private editingElement: HTMLElement | null = null;
@@ -1015,6 +1011,7 @@ class HanzoPageOverlay {
     this.root?.setAttribute('data-open', 'true');
     this.applyPushIfOpen();
     this.loadModels();
+    this.follow();
     this.focusInput();
   }
 
@@ -1250,6 +1247,15 @@ class HanzoPageOverlay {
         border: 1px solid rgba(255, 255, 255, 0.10);
       }
 
+      /* A step the agent took on the page: a line, not a bubble. */
+      .hanzo-page-msg.step {
+        align-self: flex-start;
+        padding: 0 4px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.5);
+      }
+
       /* Composer pinned to bottom of the panel. flex-shrink: 0 prevents
          it from collapsing when the messages scroller grows. */
       .hanzo-page-composer {
@@ -1359,7 +1365,7 @@ class HanzoPageOverlay {
           </select>
         </div>
         <div class="hanzo-page-messages" data-role="messages">
-          <div class="hanzo-page-msg assistant">Ask about this page, inspect any element, or turn on Edit mode to change text in-place.</div>
+          <div class="hanzo-page-msg assistant">${OVERLAY_INTRO}</div>
         </div>
         <div class="hanzo-page-composer">
           <textarea data-role="input" rows="1" placeholder="Ask anything…"></textarea>
@@ -1650,6 +1656,41 @@ class HanzoPageOverlay {
     this.inputEl.focus();
   }
 
+  /**
+   * The thread is the background agent's, the same one the popup draws: this
+   * panel follows it on a port, is sent it on connect and after every change,
+   * and a worker stopped under it closes the port, so it connects again.
+   */
+  private follow(): void {
+    if (this.agent) return;
+    const port = chrome.runtime.connect({ name: 'agent' });
+    this.agent = port;
+    port.onMessage.addListener((m: { action?: string; state?: AgentState }) => {
+      if (m?.action === 'agent.update' && m.state) this.draw(m.state);
+    });
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
+      this.agent = null;
+      if (this.open) setTimeout(() => this.follow(), 500);
+    });
+  }
+
+  private draw(state: AgentState): void {
+    this.sending = state.busy;
+    if (this.sendBtn) this.sendBtn.textContent = state.busy ? 'Stop' : 'Send';
+    this.updateStatus(state.busy ? 'Working…' : 'Ready');
+    if (!this.messagesEl) return;
+    this.messagesEl.replaceChildren(
+      ...(state.turns.length ? state.turns : [{ id: 'intro', role: 'assistant' as const, content: OVERLAY_INTRO }]).map((turn) => {
+        const div = document.createElement('div');
+        div.className = `hanzo-page-msg ${turn.role}`;
+        div.textContent = 'error' in turn && turn.error ? `Error: ${turn.error}` : turn.content;
+        return div;
+      }),
+    );
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
   private appendMessage(role: 'user' | 'assistant', content: string): void {
     if (!this.messagesEl) return;
     const div = document.createElement('div');
@@ -1686,65 +1727,39 @@ class HanzoPageOverlay {
   }
 
   private async askPageQuestion(): Promise<void> {
-    if (this.sending || !this.inputEl) return;
+    if (!this.inputEl) return;
+    // While a turn runs, send is stop.
+    if (this.sending) {
+      void chrome.runtime.sendMessage({ action: 'agent.stop' });
+      return;
+    }
 
     const prompt = this.normalizeText(this.inputEl.value);
     if (!prompt) return;
 
-    const tokenResp = await chrome.runtime.sendMessage({ action: 'auth.getToken' });
-    if (!tokenResp?.success || !tokenResp.token) {
-      this.appendMessage('assistant', 'Please sign in from the Hanzo sidebar/popup before using page chat.');
-      return;
-    }
-
-    this.sending = true;
-    this.updateStatus('Thinking...');
-    this.sendBtn && (this.sendBtn.disabled = true);
-
     this.inputEl.value = '';
     this.inputEl.style.height = 'auto';
-    this.appendMessage('user', prompt);
 
-    const systemContext = this.buildPageContext();
-    const requestMessages: OverlayChatMessage[] = [
-      {
-        role: 'system',
-        content: [
-          'You are Hanzo page overlay assistant.',
-          'Use provided page context and selected element context when relevant.',
-          'Be concise and provide concrete UI or DOM edit suggestions when asked.',
-          '',
-          systemContext,
-        ].join('\n'),
-      },
-      ...this.messages.slice(-8),
-      { role: 'user', content: prompt },
-    ];
     const listed = Array.from(this.modelEl?.options || [], (option) => option.value);
-    const model = pickModelForTokenBudget(this.modelEl?.value || 'auto', listed, estimateMessageTokens(requestMessages));
+    const model = pickModelForTokenBudget(
+      this.modelEl?.value || 'auto',
+      listed,
+      estimateMessageTokens([{ role: 'user', content: prompt }]),
+    );
 
     try {
       const response = await chrome.runtime.sendMessage({
-        action: 'chat.complete',
+        action: 'agent.send',
+        text: prompt,
         model,
-        messages: requestMessages,
+        // The page, its selection, and the element picked here: the background
+        // gives them to the model beside the tools it can see the page with.
+        context: this.buildPageContext(),
       });
-
-      if (!response?.success || !response.content) {
-        throw new Error(response?.error || 'No response from chat service');
-      }
-
-      const answer = String(response.content).trim();
-      this.appendMessage('assistant', answer || 'No response content.');
-      this.messages.push({ role: 'user', content: prompt }, { role: 'assistant', content: answer });
-      this.messages = this.messages.slice(-20);
-      this.updateStatus('Ready');
+      if (!response?.success) throw new Error(response?.error || 'The agent is not running');
     } catch (error: any) {
       this.appendMessage('assistant', `Error: ${error?.message || 'Chat request failed'}`);
-      this.updateStatus('Error');
     } finally {
-      this.sending = false;
-      this.sendBtn && (this.sendBtn.disabled = false);
       this.focusInput();
     }
   }

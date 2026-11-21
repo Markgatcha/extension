@@ -219,6 +219,45 @@ that process exits another takes over and the extension reconnects.
   `{action: 'drive'}` (web pages refused). The older `hanzo.click/fill/…`
   selector verbs are no longer called by hanzo-mcp; WXT step 3 deletes them.
 
+## The chat that acts in the page (popup, on-page panel)
+
+The toolbar popup is a chat, nothing else: header (new thread, page panel,
+settings), the thread, pinned chips, the composer. Everything it used to carry
+on three tabs (tools, accounts and usage, bridges) is a section of settings,
+and a pin beside it (`hanzo_pinned` in `storage.local`, none by default) puts a
+chip for it on the chat view. A tool chip runs the tool; a panel chip opens its
+section. One handler (`data-tool` / `data-feature`) runs both, so a tool's
+feedback lands on the button that was pressed.
+
+The chat acts because of `shared/agent.ts`, started once by each background
+(`startAgent({ api, token })`): one thread, one loop. Each step is a
+`/v1/chat/completions` call with `tools` (`snapshot`, `read`, `act`, `navigate`,
+`wait`), and each tool is a `hanzo.<name>` method of `shared/drive.ts`, so a
+model drives a page the way hanzo-mcp does: by ref, no debugger, no provider
+key (the bearer is the IAM session). The thread lives in the background, not
+the popup, because a popup closes the moment the person clicks into the page.
+Surfaces follow it on a port named `agent` (sent the thread on connect and after
+every change) and send `agent.send {text, model, tabId?, context?}`, `agent.stop`,
+`agent.reset`. `tabId` defaults to the sender's tab (the on-page panel), else the
+active one. The thread is kept in `storage.session` as words and steps only,
+never a page's contents; the toolbar badge shows `…` while a turn runs.
+
+- The popup lists the models that call tools (Enso, Zen 6 family). Kai is a
+  decision model, not a chat model; ChatGPT Web, the local nodes and WebGPU have
+  no tool calling, so they are not in the popup's picker. The sidebar and new
+  tab keep their own pickers.
+- `navigate` opens http(s) only; a page's text is data, and the system prompt
+  tells the model to stop and ask before spending, sending, deleting or entering
+  a password. Do not start an `ai.control` session for it: that overlay blocks
+  every click in the page, the agent's own included.
+- The on-page panel (`content-script.ts`) is the same chat: it follows the same
+  port and sends `agent.send` with the page, selection and picked element as
+  `context`. The sidebar (Firefox sidebar, "full chat" tab) is still its own
+  streaming chat with RAG; it does not call the agent.
+- `e2e/agent.spec.ts` drives all of it in Chromium against a real page; the
+  model is scripted on the service worker's `fetch` (a page route cannot reach a
+  worker). `tests/shared-agent.test.ts` covers the loop and the runtime.
+
 ## Versioning
 Patch only (X.Y.Z+1), never major. `package.json` is the source of truth; `build.js`
 stamps it into every manifest (chrome/firefox/safari).
