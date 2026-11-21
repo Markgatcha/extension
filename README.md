@@ -2,6 +2,8 @@
 
 # Hanzo extensions
 
+[![Open in Hanzo](https://hanzo.app/badges/open-in-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/extension&ref=main&action=open) [![Edit with Hanzo](https://hanzo.app/badges/edit-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/extension&ref=main&action=edit) [![Deploy with Hanzo](https://hanzo.app/badges/deploy-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/extension&ref=main&action=deploy)
+
 Hanzo AI inside every browser, editor and work app. One pnpm workspace; every
 build lands in `dist/`.
 
