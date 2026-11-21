@@ -378,3 +378,9 @@ WebCrypto needs Chrome 137+ / Firefox 129+; below that Link reports it. A browse
 routable: no code submits to or reads a consumer AI page. `source-usage.ts` holds the HIP
 UsageRecord builder and a local outbox (last 100 batches) shown in the popup; nothing sends it
 until cloud has the usage op (slice 3).
+
+Sign-in goes to `https://hanzo.ai/login`; the issuer, token endpoint and JWKS URI are read from
+`https://hanzo.ai/.well-known/openid-configuration` (`shared/discovery.ts`), cached an hour in
+extension storage, and never hard-coded. Unreachable discovery with an expired cache fails closed
+(no sign-in, no refresh) and keeps the stored session. No host permission was added: the manifest's
+`<all_urls>` already covers hanzo.ai and the discovered token host.

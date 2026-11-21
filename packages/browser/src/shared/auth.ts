@@ -8,10 +8,9 @@
  * each provide their own `tabs` and `storage` implementations.
  */
 
+import { discover, DiscoveryError, type Discovery } from './discovery.js';
 import {
   IAM_LOGIN_URL,
-  IAM_API_URL,
-  IAM_API_PATH,
   DEFAULT_CLIENT_ID,
   DEFAULT_SCOPES,
   DEFAULT_REDIRECT_URI,
@@ -338,6 +337,7 @@ async function exchangeAndStoreCallback(
   redirectUri: string,
 ): Promise<UserInfo> {
   const config = await getRuntimeConfig(storage);
+  const oidc = await discover(storage, config.iamLoginUrl);
   const url = new URL(callbackUrl);
   if (url.searchParams.get('state') !== state) throw new Error('State mismatch — possible CSRF');
 
@@ -351,9 +351,9 @@ async function exchangeAndStoreCallback(
       token_type: 'Bearer',
     });
   } else if (code) {
-    // HIP-0111 canonical token endpoint `/v1/iam/oauth/token`. Token
-    // exchange wants application/x-www-form-urlencoded per RFC 6749.
-    const tokenResponse = await fetch(`${config.iamApiUrl}${IAM_API_PATH}/oauth/token`, {
+    // The token endpoint is the discovered one. Token exchange wants
+    // application/x-www-form-urlencoded per RFC 6749.
+    const tokenResponse = await fetch(oidc.token_endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -365,7 +365,9 @@ async function exchangeAndStoreCallback(
       }).toString(),
     });
     if (!tokenResponse.ok) throw new Error(`Token exchange failed: ${await tokenResponse.text()}`);
-    await storeTokens(storage, await tokenResponse.json());
+    const tokens: TokenData = await tokenResponse.json();
+    assertIssuer(tokens.id_token, oidc);
+    await storeTokens(storage, tokens);
   } else {
     const error = url.searchParams.get('error_description') || url.searchParams.get('error') || 'No authorization code or token';
     throw new Error(error);
@@ -375,7 +377,7 @@ async function exchangeAndStoreCallback(
 
   const { accessToken } = await getStoredTokens(storage);
   if (!accessToken) throw new Error('Login succeeded but no token was stored');
-  const user = await fetchUserInfo(storage, accessToken);
+  const user = await fetchUserInfo(oidc, accessToken);
   await storage.set({ [STORAGE_KEYS.user]: user });
   return user;
 }
@@ -383,6 +385,7 @@ async function exchangeAndStoreCallback(
 /** Initiate OAuth2 login. Works on Chrome, Firefox, and Safari. */
 export async function login(adapter: BrowserAdapter): Promise<UserInfo> {
   const config = await getRuntimeConfig(adapter.storage);
+  await discover(adapter.storage, config.iamLoginUrl);
   const { codeVerifier, codeChallenge } = await generatePkceChallenge();
   const state = generateRandomString(32);
   const redirectUri = config.redirectUri;
@@ -397,7 +400,7 @@ export async function login(adapter: BrowserAdapter): Promise<UserInfo> {
     } satisfies PendingPkce,
   });
 
-  const authorizeUrl = new URL(`${config.iamLoginUrl}${IAM_API_PATH}/oauth/authorize`);
+  const authorizeUrl = new URL(`${config.iamLoginUrl}/login`);
   authorizeUrl.searchParams.set('client_id', config.clientId);
   authorizeUrl.searchParams.set('response_type', 'code');
   authorizeUrl.searchParams.set('redirect_uri', redirectUri);
@@ -517,7 +520,7 @@ export async function syncWebSession(
   let user: UserInfo | null = webTokens.user && typeof webTokens.user === 'object' ? webTokens.user : null;
   if (!user) {
     try {
-      user = await fetchUserInfo(storage, accessToken);
+      user = await fetchUserInfo(await discover(storage, (await getRuntimeConfig(storage)).iamLoginUrl), accessToken);
     } catch {
       user = parseJwtUserInfo(accessToken) || (webTokens.idToken ? parseJwtUserInfo(webTokens.idToken) : null);
     }
@@ -552,7 +555,8 @@ export async function getValidAccessToken(storage: BrowserStorage): Promise<stri
   if (refreshToken) {
     try {
       return await refreshAccessToken(storage, refreshToken);
-    } catch {
+    } catch (e) {
+      if (e instanceof DiscoveryError) return null;
       await logout(storage);
       return null;
     }
@@ -574,7 +578,8 @@ export async function getValidAccessToken(storage: BrowserStorage): Promise<stri
 
 async function refreshAccessToken(storage: BrowserStorage, refreshToken: string): Promise<string> {
   const config = await getRuntimeConfig(storage);
-  const response = await fetch(`${config.iamApiUrl}${IAM_API_PATH}/oauth/token`, {
+  const oidc = await discover(storage, config.iamLoginUrl);
+  const response = await fetch(oidc.token_endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -585,24 +590,35 @@ async function refreshAccessToken(storage: BrowserStorage, refreshToken: string)
   });
   if (!response.ok) throw new Error('Token refresh failed');
   const tokens: TokenData = await response.json();
+  assertIssuer(tokens.id_token, oidc);
   await storeTokens(storage, tokens);
   return tokens.access_token;
 }
 
-/** Fetch user info from IAM via the canonical HIP-0111 OIDC userinfo
- *  endpoint `${iamApiUrl}/v1/iam/oauth/userinfo`. Returns standard OIDC
- *  claims (sub, email, name, picture); never the legacy IAM `/api/` shape. */
-async function fetchUserInfo(storage: BrowserStorage, accessToken: string): Promise<UserInfo> {
-  const config = await getRuntimeConfig(storage);
-  const headers = { Authorization: `Bearer ${accessToken}` };
-
-  try {
-    const response = await fetch(`${config.iamApiUrl}${IAM_API_PATH}/oauth/userinfo`, { headers });
-    if (response.ok) {
-      return await response.json();
+/** An id_token, when one comes back, must name the discovered issuer. */
+function assertIssuer(idToken: string | undefined, oidc: Discovery): void {
+  if (!idToken) return;
+  const iss = (() => {
+    try {
+      const p = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(atob(p + '='.repeat((4 - (p.length % 4)) % 4))).iss;
+    } catch {
+      return undefined;
     }
-  } catch {
-    // Fall back to JWT payload claims below if userinfo network call fails
+  })();
+  if (iss !== oidc.issuer) throw new Error('id_token issuer is not the discovered issuer');
+}
+
+/** Fetch user info from the discovered userinfo endpoint (standard OIDC claims),
+ *  else read the claims from the access token. */
+async function fetchUserInfo(oidc: Discovery, accessToken: string): Promise<UserInfo> {
+  if (oidc.userinfo_endpoint) {
+    try {
+      const response = await fetch(oidc.userinfo_endpoint, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (response.ok) return await response.json();
+    } catch {
+      // Fall back to JWT payload claims below if the userinfo call fails
+    }
   }
 
   const fromJwt = parseJwtUserInfo(accessToken);

@@ -39,10 +39,28 @@ function storageOf(seed: Record<string, unknown>) {
   };
 }
 
-const mockFetch = vi.fn();
+/** A discovery whose issuer and endpoints match no default the client could have. */
+const DISCOVERY = {
+  issuer: 'https://id.example.test',
+  authorization_endpoint: 'https://id.example.test/authorize',
+  token_endpoint: 'https://tokens.example.test/token',
+  jwks_uri: 'https://id.example.test/jwks',
+  userinfo_endpoint: 'https://id.example.test/userinfo',
+};
+const DISCOVERY_URL = 'https://hanzo.ai/.well-known/openid-configuration';
+
+const inner = vi.fn();
+/** Discovery answers by URL; every other call goes to `inner`, in order. */
+const route = async (url: string, init?: any): Promise<any> =>
+  url === DISCOVERY_URL ? { ok: true, status: 200, json: async () => DISCOVERY } : inner(url, init);
+const mockFetch = vi.fn(route);
 vi.stubGlobal('fetch', mockFetch);
 
-beforeEach(() => mockFetch.mockReset());
+beforeEach(() => {
+  mockFetch.mockReset();
+  mockFetch.mockImplementation(route);
+  inner.mockReset();
+});
 
 describe('getValidAccessToken', () => {
   it('returns a token that has not expired', async () => {
@@ -73,7 +91,7 @@ describe('getValidAccessToken', () => {
   });
 
   it('refreshes an expired token when a refresh token is stored', async () => {
-    mockFetch.mockResolvedValue({
+    inner.mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ access_token: 'minted', token_type: 'Bearer', expires_in: 3600 }),
@@ -88,7 +106,7 @@ describe('getValidAccessToken', () => {
   });
 
   it('clears the session when the refresh is rejected', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 400, json: async () => ({}) });
+    inner.mockResolvedValue({ ok: false, status: 400, json: async () => ({}) });
     const storage = storageOf({
       [STORAGE_KEYS.accessToken]: 'stale',
       [STORAGE_KEYS.refreshToken]: 'revoked',
@@ -107,6 +125,73 @@ describe('getValidAccessToken', () => {
 
   it('is null when nothing is stored', async () => {
     expect(await getValidAccessToken(storageOf({}) as any)).toBeNull();
+  });
+});
+
+describe('discovery', () => {
+  it('sends the person to hanzo.ai/login and exchanges at the discovered token endpoint', async () => {
+    const storage = storageOf({});
+    let opened = '';
+    const listeners: any[] = [];
+    const tabs = {
+      onUpdated: { addListener: (f: any) => listeners.push(f), removeListener() {} },
+      onRemoved: { addListener() {}, removeListener() {} },
+      async create({ url }: { url: string }) {
+        opened = url;
+        const state = new URL(url).searchParams.get('state')!;
+        setTimeout(() => listeners.forEach((f) => f(7, { url: `https://hanzo.ai/callback?code=c&state=${state}` }, { id: 7 })), 5);
+        return { id: 7, url };
+      },
+      async remove() {},
+    };
+    inner
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ access_token: 'a', expires_in: 3600 }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sub: 'u', email: 'u@hanzo.ai' }) });
+    await login({ storage: storage as any, tabs: tabs as any });
+    const u = new URL(opened);
+    expect(`${u.origin}${u.pathname}`).toBe('https://hanzo.ai/login');
+    expect(u.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(inner.mock.calls[0][0]).toBe(DISCOVERY.token_endpoint);
+    expect(inner.mock.calls[1][0]).toBe(DISCOVERY.userinfo_endpoint);
+  });
+
+  it('caches the document and fetches it again after the TTL', async () => {
+    const { discover, DISCOVERY_TTL_MS } = await import('../src/shared/discovery');
+    const storage = storageOf({});
+    const t0 = 1_000_000;
+    await discover(storage as any, 'https://hanzo.ai', t0);
+    await discover(storage as any, 'https://hanzo.ai', t0 + DISCOVERY_TTL_MS - 1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    await discover(storage as any, 'https://hanzo.ai', t0 + DISCOVERY_TTL_MS);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed: unreachable discovery blocks sign-in and keeps the session', async () => {
+    mockFetch.mockImplementation(async () => {
+      throw new Error('offline');
+    });
+    const storage = storageOf({
+      [STORAGE_KEYS.accessToken]: 'stale',
+      [STORAGE_KEYS.refreshToken]: 'keep-me',
+      [STORAGE_KEYS.expiresAt]: Date.now() - HOUR,
+    });
+    await expect(login({ storage: storage as any, tabs: {} as any })).rejects.toThrow(/discovery/);
+    expect(await getValidAccessToken(storage as any)).toBeNull();
+    expect(storage.data[STORAGE_KEYS.refreshToken]).toBe('keep-me');
+  });
+
+  it('refuses a document with a non-https endpoint', async () => {
+    mockFetch.mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({ ...DISCOVERY, token_endpoint: 'http://evil.test/token' }) }) as any);
+    const { discover } = await import('../src/shared/discovery');
+    await expect(discover(storageOf({}) as any, 'https://hanzo.ai')).rejects.toThrow(/token_endpoint/);
+  });
+
+  it('refuses an id_token from another issuer', async () => {
+    const forged = `x.${btoa(JSON.stringify({ iss: 'https://hanzo.id' }))}.y`;
+    inner.mockResolvedValue({ ok: true, status: 200, json: async () => ({ access_token: 'a', id_token: forged }) });
+    const storage = storageOf({ [STORAGE_KEYS.accessToken]: 'old', [STORAGE_KEYS.refreshToken]: 'r', [STORAGE_KEYS.expiresAt]: Date.now() - HOUR });
+    expect(await getValidAccessToken(storage as any)).toBeNull();
+    expect(inner.mock.calls[0][0]).toBe(DISCOVERY.token_endpoint);
   });
 });
 
@@ -152,7 +237,7 @@ describe('OAuth callback & web session sync', () => {
       },
     };
 
-    mockFetch
+    inner
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -208,7 +293,7 @@ describe('OAuth callback & web session sync', () => {
       },
     };
 
-    mockFetch
+    inner
       .mockResolvedValueOnce({
         ok: true,
         status: 200,

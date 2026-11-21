@@ -38,25 +38,17 @@ describe('IAM URL conventions', () => {
     expect(sharedConfig).toContain("IAM_API_PATH = '/v1/iam'");
   });
 
-  it('shared auth uses the HIP-0111 canonical ${IAM_API_PATH}/oauth/token endpoint', () => {
-    // Pre-HIP-0111 shapes are both dead: the legacy
-    // /login/oauth/access_token path and a bare (un-prefixed) /oauth/token
-    // that 404'd before 1.8.7. Strip comments before scanning — the
-    // doc-comments intentionally reference the old paths to explain the bug.
-    expect(sharedAuth).toContain('${IAM_API_PATH}/oauth/token');
+  it('shared auth takes the token endpoint from discovery, never a constant', () => {
     const stripped = sharedAuth
-      .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
-      .replace(/(^|\n)\s*\/\/.*?(?=\n|$)/g, '$1'); // line comments
-    expect(stripped).not.toContain('/login/oauth/access_token');
-    expect(stripped).not.toMatch(/['"`]\/oauth\/token['"`]/);
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\n)\s*\/\/.*?(?=\n|$)/g, '$1');
+    expect(stripped).toContain('oidc.token_endpoint');
+    expect(stripped).not.toMatch(/\/oauth\/token|\/login\/oauth\/access_token|hanzo\.id/);
   });
 
   it('token exchange uses application/x-www-form-urlencoded (RFC 6749)', () => {
-    // application/json was the bug pre-1.8.7. Verify the body shape.
-    const tokenBlock = sharedAuth.slice(
-      sharedAuth.indexOf('${IAM_API_PATH}/oauth/token'),
-      sharedAuth.indexOf('${IAM_API_PATH}/oauth/token') + 1500,
-    );
+    const at = sharedAuth.indexOf('oidc.token_endpoint');
+    const tokenBlock = sharedAuth.slice(at, at + 1500);
     expect(tokenBlock).toContain('application/x-www-form-urlencoded');
     expect(tokenBlock).toContain('URLSearchParams');
   });

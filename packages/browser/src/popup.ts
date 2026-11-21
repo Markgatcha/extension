@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     drawModels();
   });
 
-  // Quiet Header: hanzo.id + X-Org-Id switcher & New Thread
+  // Quiet Header: hanzo.ai + X-Org-Id switcher & New Thread
   const headerZapDot = document.getElementById('header-zap-dot');
   const orgPillBtn = document.getElementById('org-pill-btn');
   const orgPillLabel = document.getElementById('org-pill-label');
@@ -119,8 +119,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderOrgDropdown() {
     if (orgPillLabel) {
       orgPillLabel.textContent = isAuthenticated
-        ? (activeOrgId ? `hanzo.id · ${activeOrgId}` : 'hanzo.id')
-        : 'hanzo.id';
+        ? (activeOrgId ? `hanzo.ai · ${activeOrgId}` : 'hanzo.ai')
+        : 'hanzo.ai';
     }
     if (!orgDropdown) return;
     orgDropdown.innerHTML = '';
