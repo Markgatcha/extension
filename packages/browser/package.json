@@ -1,6 +1,6 @@
 {
   "name": "@hanzo/browser-extension",
-  "version": "1.9.77",
+  "version": "1.9.78",
   "description": "Hanzo AI Browser Extension",
   "scripts": {
     "build": "node src/build.js",
@@ -16,6 +16,7 @@
     "@hanzo/event": "catalog:",
     "@hanzo/gui": "catalog:",
     "@hanzo/ui": "catalog:",
+    "@hanzo/sources": "catalog:",
     "@hanzo/usage": "catalog:",
     "@hanzogui/config": "catalog:",
     "@hanzogui/lucide-icons-2": "catalog:",

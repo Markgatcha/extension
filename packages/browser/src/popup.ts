@@ -14,6 +14,7 @@ import {
   shortcutFromEvent,
   type Shortcut,
 } from './shared/shortcut.js';
+import { API_BASE_URL } from './shared/config.js';
 import { getConsent, setConsent, capture } from './shared/consent.js';
 import { renderMarkdown } from './shared/markdown.js';
 import { estimateMessageTokens, pickModelForTokenBudget, zenModels } from './runtime-guard.js';
@@ -1183,6 +1184,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const toBackground = (message: Record<string, unknown>) =>
     new Promise<any>((resolve) => chrome.runtime.sendMessage(message, (r) => resolve(chrome.runtime.lastError ? { success: false, error: chrome.runtime.lastError.message } : r)));
 
+  let linkedMount: { update(next: Record<string, unknown>): void } | undefined;
+
   async function drawLinked() {
     const [st, out] = await Promise.all([toBackground({ action: 'source.status' }), toBackground({ action: 'source.outbox' })]);
     const linked = !!st?.linked;
@@ -1195,18 +1198,14 @@ document.addEventListener('DOMContentLoaded', () => {
     linkedUnlink.classList.toggle('hidden', !linked);
     linkedBeat.textContent = st?.lastBeat ? JSON.stringify(JSON.parse(st.lastBeat), null, 2) : 'Nothing sent yet.';
     linkedOutbox.textContent = JSON.stringify(out?.batches ?? [], null, 2);
-    linkedSources.replaceChildren();
     if (!isAuthenticated) return;
-    const list = await toBackground({ action: 'source.list' });
-    for (const s of list?.sources ?? []) {
-      const li = document.createElement('li');
-      const name = document.createElement('span');
-      name.textContent = `${s.name} (${s.kind})`;
-      const state = document.createElement('span');
-      state.textContent = s.state;
-      li.append(name, state);
-      linkedSources.append(li);
-    }
+    const { token } = await toBackground({ action: 'auth.getToken' });
+    if (!token) return;
+    // The shared view of every source and account. The browser source is view-only here.
+    const { mountSources } = await import(/* the sources bundle, a file of this extension */ new URL('sources.js', location.href).href);
+    const options = { surface: 'extension', token, apiBase: API_BASE_URL, deviceId: st?.id, theme: 'dark' };
+    if (linkedMount) linkedMount.update(options);
+    else linkedMount = mountSources(linkedSources, options);
   }
 
   linkedLink.addEventListener('click', async () => {

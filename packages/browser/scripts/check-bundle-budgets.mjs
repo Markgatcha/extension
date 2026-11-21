@@ -40,7 +40,9 @@ const BUDGETS = {
   // (shared/inspect.ts: React/Vue/Svelte/Astro file:line for hanzo.inspected).
   // 276.2 — RAISED from 270 (268.4) for the agent (shared/agent.ts): the tool
   // schemas, the system prompt and the loop that lets the chat act in the page.
-  'background.js': 277,
+  // 283.6 — RAISED from 277 for the linked source (shared/source.ts): device
+  // key, signed heartbeat, provider detection, and the usage outbox.
+  'background.js': 284,
   'content-script.js': 62, // 57.0
   // 29.7 — RAISED from 29 (28.1) for closed Shadow-DOM `>>>` selector piercing
   // (`deepQuerySelector`), ShadowRoot/SVG hit-testing (`sameHitTarget`), and
@@ -49,7 +51,11 @@ const BUDGETS = {
   // 1079.6 — RAISED from 765 with newtab.js below, for the same reason: both
   // draw the one composer of @hanzo/ui 8.29.40.
   'sidebar.js': 1085,
-  'popup.js': 65, // 64.2
+  // 65.5 — RAISED from 65 for the Linked to Hanzo section.
+  'popup.js': 66,
+  // 712.7 — @hanzo/sources' shared view (gui runtime included), loaded only when
+  // the popup's Linked section opens.
+  'sources.js': 713,
   // 1084.3 — RAISED from 760 at 1.9.71: the new tab draws the one composer
   // every Hanzo surface draws (@hanzo/ui 8.27.0 -> 8.29.40, its `mind`, `mode`
   // and `chips`). By esbuild metafile against 756.7: @hanzo/ui +69.5KB (the

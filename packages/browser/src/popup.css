@@ -1548,18 +1548,11 @@ body {
   gap: 8px;
 }
 
-.linked-sources {
-  margin: 0 12px 8px;
-  padding: 0;
-  list-style: none;
-  font-size: 11px;
-  color: var(--text-primary);
-}
-
-.linked-sources li {
-  display: flex;
-  justify-content: space-between;
-  padding: 3px 0;
+.sec #linked-sources {
+  position: relative;
+  max-height: 320px;
+  overflow: auto;
+  isolation: isolate;
 }
 
 .linked-sent > summary {

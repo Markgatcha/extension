@@ -141,6 +141,17 @@ async function build() {
   });
 
   await esbuild.build({
+    ...WEB,
+    entryPoints: ['src/sources.ts'],
+    bundle: true,
+    outfile: out('sources.js'),
+    platform: 'browser',
+    target: ['chrome90', 'firefox91', 'safari15'],
+    format: 'esm',
+    minify: true,
+  });
+
+  await esbuild.build({
     entryPoints: ['src/popup.ts'],
     bundle: true,
     outfile: out('popup.js'),
@@ -267,6 +278,7 @@ async function build() {
     // Copy compiled popup/sidebar/newtab scripts
     fs.copyFileSync(out('popup.js'), path.join(dir, 'popup.js'));
     fs.copyFileSync(out('sidebar.js'), path.join(dir, 'sidebar.js'));
+    fs.copyFileSync(out('sources.js'), path.join(dir, 'sources.js'));
     fs.copyFileSync(out('newtab.js'), path.join(dir, 'newtab.js'));
     fs.copyFileSync(out('newtab.css'), path.join(dir, 'newtab.css'));
     fs.copyFileSync(out('onboarding.js'), path.join(dir, 'onboarding.js'));

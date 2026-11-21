@@ -241,12 +241,6 @@ export function createSource(deps: SourceDeps) {
     return status();
   }
 
-  async function list(): Promise<unknown[]> {
-    const r = await call('GET', '/v1/sources', await bearer());
-    if (!r.ok) throw new Error(`List failed (${r.status}).`);
-    return r.json?.sources ?? [];
-  }
-
   /** One heartbeat. `force` skips the 10 s gap; otherwise a call inside it is a no-op. */
   async function tick(force = false): Promise<void> {
     if (flying) return;
@@ -284,12 +278,11 @@ export function createSource(deps: SourceDeps) {
     'source.status': status,
     'source.link': link,
     'source.unlink': unlink,
-    'source.list': async () => ({ sources: await list() }),
     'source.outbox': async () => ({ batches: await readOutbox(deps.storage) }),
   };
 
   return {
-    status, link, unlink, list, tick,
+    status, link, unlink, tick,
     /** Answer a popup message; false when the action is not this module's. */
     handle(action: string, _request: unknown, respond: (r: any) => void): boolean {
       const op = ops[action];

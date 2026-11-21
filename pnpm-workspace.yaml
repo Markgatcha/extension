@@ -87,6 +87,7 @@ catalog:
   '@hanzo/iam': '0.21.17'
   '@hanzo/logo': '1.0.24'
   '@hanzo/ui': '8.29.40'
+  '@hanzo/sources': '0.1.0'
   '@hanzo/usage': '0.1.7'
   '@hanzo/voice': '0.1.19'
   '@hanzogui/config': '8.3.5'
@@ -419,6 +420,7 @@ minimumReleaseAgeExclude:
   - '@hanzo/appearance@0.2.13'
   - '@hanzo/design@0.5.38'
   - '@hanzo/ui@8.29.40'
+  - '@hanzo/sources@0.1.0'
 
 overrides:
   '@noble/hashes': '1.8.0'
