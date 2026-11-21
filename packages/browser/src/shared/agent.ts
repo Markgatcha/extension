@@ -1,30 +1,9 @@
 /**
- * The chat that acts in the page: one thread, one tab, one loop.
- *
- * Both backgrounds start this once (`startAgent`) and hand it the extension API
- * they run on, so Chrome, Firefox and Safari answer the same `agent.*` messages
- * with the same code. The thread lives here, not in the popup: a popup closes
- * the moment the person clicks into the page the agent is working on, and the
- * work has to outlive that. A surface opens a port named `agent`, is sent the
- * thread at once and again after every change, and draws it.
- *
- * Every step is one gateway call, `/v1/chat/completions` with `tools`, and the
- * tools are the snapshot → ref engine of shared/drive.ts: `snapshot`, `read`,
- * `act`, `navigate`, `wait`. The model sees the page as text, names an element
- * by ref, and the page half acts on it. No debugger attach, no provider key:
- * the bearer is the person's IAM session.
- *
- * Port `agent`:   → { action: 'agent.update', state }, on connect and after every change
- * Messages:
- *   agent.send  { text, model, tabId?, context? }  → starts a turn; answers at once.
- *               `tabId` defaults to the sender's tab, else the active one;
- *               `context` is more for the system prompt (a selected element).
- *   agent.stop                                     → ends the turn in flight
- *   agent.reset                                    → ends it and clears the thread
- *
- * `storage.session` keeps the thread (storage.local where a browser has none):
- * it holds the words said and the steps taken, never a page's contents, and it
- * is gone when the browser closes.
+ * The chat that acts in the page: one thread, one loop, run by the background so
+ * it outlives the popup. A surface opens a port named `agent`, is sent the thread
+ * on connect and after every change, and sends agent.send / agent.stop /
+ * agent.reset. Each step is a /v1/chat/completions call with the tools below, and
+ * each tool is a `hanzo.<name>` method of shared/drive.ts.
  */
 
 import { API_BASE_URL } from './config.js';
@@ -43,8 +22,6 @@ export interface Turn {
 export interface AgentState {
   turns: Turn[];
   busy: boolean;
-  /** The tab the agent was given, as it was when the turn began. */
-  page: { id: number; title: string; url: string } | null;
 }
 
 // ── The wire ───────────────────────────────────────────────────────────
@@ -120,7 +97,7 @@ export const TOOLS = [
 
 const NAMES = new Set(TOOLS.map((t) => t.function.name));
 
-export const SYSTEM = [
+const SYSTEM = [
   'You are Hanzo, an assistant in the person\'s own browser, working on the tab they have open.',
   'You see the page as text and act on it with tools: snapshot, read, act, navigate, wait.',
   'Snapshot before you act and again after anything changes; refs belong to the latest snapshot. If a ref is refused, snapshot and use the new one.',
@@ -185,7 +162,6 @@ export function render(name: string, out: Record<string, any>): string {
 // ── The loop ───────────────────────────────────────────────────────────
 
 export interface Converse {
-  base?: string;
   token: string;
   orgId?: string;
   model: string;
@@ -196,7 +172,6 @@ export interface Converse {
   step: (name: string, args: Args) => void;
   signal?: AbortSignal;
   fetch?: typeof fetch;
-  max?: number;
 }
 
 /** Ask, run the tools the model names, tell it what happened, until it answers in words. */
@@ -205,11 +180,10 @@ export async function converse(o: Converse): Promise<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${o.token}` };
   if (o.orgId) headers['X-Org-Id'] = o.orgId;
   const messages = [...o.messages];
-  const max = o.max ?? MAX_STEPS;
 
-  for (let i = 0; i < max; i++) {
+  for (let i = 0; i < MAX_STEPS; i++) {
     o.signal?.throwIfAborted();
-    const res = await doFetch(`${o.base ?? API_BASE_URL}/v1/chat/completions`, {
+    const res = await doFetch(`${API_BASE_URL}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ model: o.model, messages, tools: TOOLS, tool_choice: 'auto', stream: false }),
@@ -237,7 +211,7 @@ export async function converse(o: Converse): Promise<string> {
       messages.push({ role: 'tool', tool_call_id: c.id, content: result });
     }
   }
-  throw new Error(`Stopped after ${max} steps. Say "continue" to keep going.`);
+  throw new Error(`Stopped after ${MAX_STEPS} steps. Say "continue" to keep going.`);
 }
 
 // ── The agent a background runs ────────────────────────────────────────
@@ -261,23 +235,20 @@ const KEY = 'agentThread';
 export function startAgent(opts: AgentOpts): Agent {
   const { api } = opts;
   const store = api.storage?.session ?? api.storage.local;
-  const state: AgentState = { turns: [], busy: false, page: null };
+  const state: AgentState = { turns: [], busy: false };
   let run: { stop: AbortController; done: Promise<void> } | null = null;
 
   const loaded = (async () => {
     const saved = (await store.get([KEY]))[KEY];
     // A worker that restarted mid-turn lost the turn; what was said stays.
-    if (saved && Array.isArray(saved.turns)) {
-      state.turns = saved.turns;
-      state.page = saved.page ?? null;
-    }
+    if (saved && Array.isArray(saved.turns)) state.turns = saved.turns;
   })().catch(() => {});
 
   // Every open surface, and the thread each is sent.
   const ports = new Set<{ postMessage(m: unknown): void }>();
 
   const publish = () => {
-    void Promise.resolve(store.set({ [KEY]: { turns: state.turns, page: state.page } })).catch(() => {});
+    void Promise.resolve(store.set({ [KEY]: { turns: state.turns } })).catch(() => {});
     for (const port of ports) {
       try {
         port.postMessage({ action: 'agent.update', state });
@@ -325,7 +296,6 @@ export function startAgent(opts: AgentOpts): Agent {
         ? await api.tabs.get(tabId)
         : (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0];
       const page = tab?.id !== undefined ? { id: tab.id as number, title: tab.title ?? '', url: tab.url ?? '' } : null;
-      state.page = page;
       const prior = history();
       add('user', text);
 
@@ -401,7 +371,6 @@ export function startAgent(opts: AgentOpts): Agent {
           ending?.stop.abort();
           void Promise.all([loaded, ending?.done]).then(() => {
             state.turns = [];
-            state.page = null;
             publish();
             sendResponse({ success: true, state });
           });

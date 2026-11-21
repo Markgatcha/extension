@@ -49,9 +49,7 @@ const BUDGETS = {
   // 1079.6 — RAISED from 765 with newtab.js below, for the same reason: both
   // draw the one composer of @hanzo/ui 8.29.40.
   'sidebar.js': 1085,
-  // 65.0 — RAISED from 65 (64.5) for the thread the popup draws (the shared
-  // markdown renderer, the pins) in place of the inline answer.
-  'popup.js': 66,
+  'popup.js': 65, // 64.2
   // 1084.3 — RAISED from 760 at 1.9.71: the new tab draws the one composer
   // every Hanzo surface draws (@hanzo/ui 8.27.0 -> 8.29.40, its `mind`, `mode`
   // and `chips`). By esbuild metafile against 756.7: @hanzo/ui +69.5KB (the

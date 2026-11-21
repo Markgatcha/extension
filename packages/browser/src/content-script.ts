@@ -1656,11 +1656,7 @@ class HanzoPageOverlay {
     this.inputEl.focus();
   }
 
-  /**
-   * The thread is the background agent's, the same one the popup draws: this
-   * panel follows it on a port, is sent it on connect and after every change,
-   * and a worker stopped under it closes the port, so it connects again.
-   */
+  /** The thread is the background agent's, the popup's too; a stopped worker closes the port, so connect again. */
   private follow(): void {
     if (this.agent) return;
     const port = chrome.runtime.connect({ name: 'agent' });
@@ -1728,7 +1724,6 @@ class HanzoPageOverlay {
 
   private async askPageQuestion(): Promise<void> {
     if (!this.inputEl) return;
-    // While a turn runs, send is stop.
     if (this.sending) {
       void chrome.runtime.sendMessage({ action: 'agent.stop' });
       return;
@@ -1752,8 +1747,6 @@ class HanzoPageOverlay {
         action: 'agent.send',
         text: prompt,
         model,
-        // The page, its selection, and the element picked here: the background
-        // gives them to the model beside the tools it can see the page with.
         context: this.buildPageContext(),
       });
       if (!response?.success) throw new Error(response?.error || 'The agent is not running');

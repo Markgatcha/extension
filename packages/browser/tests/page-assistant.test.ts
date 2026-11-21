@@ -91,7 +91,6 @@ describe('page assistant thread', () => {
   it('draws the agent\'s thread, steps and failures included, and turns Send into Stop while it works', () => {
     push({
       busy: true,
-      page: null,
       turns: [
         { id: '1', role: 'user', content: 'buy it' },
         { id: '2', role: 'step', content: 'click @e1' },
@@ -112,7 +111,7 @@ describe('page assistant thread', () => {
   });
 
   it('goes back to the introduction when the thread is cleared', () => {
-    push({ busy: false, page: null, turns: [] });
+    push({ busy: false, turns: [] });
     expect(messages()).toHaveLength(1);
     expect(messages()[0][1]).toContain('Ask about this page');
     expect(send().textContent).toBe('Send');

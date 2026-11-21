@@ -242,10 +242,9 @@ every change) and send `agent.send {text, model, tabId?, context?}`, `agent.stop
 active one. The thread is kept in `storage.session` as words and steps only,
 never a page's contents; the toolbar badge shows `…` while a turn runs.
 
-- The popup lists the models that call tools (Enso, Zen 6 family). Kai is a
-  decision model, not a chat model; ChatGPT Web, the local nodes and WebGPU have
-  no tool calling, so they are not in the popup's picker. The sidebar and new
-  tab keep their own pickers.
+- The popup's picker is Auto plus the Zen chat models of the gateway's own list
+  (`chat.listModels` through `zenModels`), the on-page panel's list; both resolve
+  Auto with `pickModelForTokenBudget`. Nothing is typed in by hand.
 - `navigate` opens http(s) only; a page's text is data, and the system prompt
   tells the model to stop and ask before spending, sending, deleting or entering
   a password. Do not start an `ai.control` session for it: that overlay blocks

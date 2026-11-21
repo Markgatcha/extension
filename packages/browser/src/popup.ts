@@ -16,6 +16,7 @@ import {
 } from './shared/shortcut.js';
 import { getConsent, setConsent, capture } from './shared/consent.js';
 import { renderMarkdown } from './shared/markdown.js';
+import { estimateMessageTokens, pickModelForTokenBudget, zenModels } from './runtime-guard.js';
 import type { AgentState } from './shared/agent.js';
 
 declare const browser: typeof chrome & {
@@ -39,44 +40,24 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch { /* manifest unavailable in some contexts */ }
   }
 
-  // Model Picker Dropdown (Enso / Zen 6 — zero zen4/zen5/qwen2)
+  // Model picker: Auto and the Zen chat models of the gateway's own list.
   const modelSelectBtn = document.getElementById('model-select-btn');
   const modelBadge = document.getElementById('model-badge');
   const modelDropdown = document.getElementById('model-dropdown');
+  let models: Array<{ id: string; name: string }> = [{ id: 'auto', name: 'Auto' }];
+  let selectedModel = 'auto';
 
-  // The models the agent can drive a page with: gateway models that call tools.
-  const MODEL_LABELS: Record<string, string> = {
-    'enso': 'Enso',
-    'zen6': 'Zen 6',
-    'zen6-flash': 'Zen 6 Flash',
-    'zen6-coder': 'Zen 6 Coder',
-    'zen6-max': 'Zen 6 Max',
-  };
-
-  // A stored choice from the old picker (Kai, ChatGPT Web, a local node) cannot call tools.
-  const normalizeModelId = (id?: string): string => {
-    const raw = (id || '').trim();
-    return raw in MODEL_LABELS ? raw : 'enso';
-  };
-
-  interface Feature {
-    id: string;
-    label: string;
-    /** A tool runs on the page; a panel is a section of settings. */
-    kind: 'tool' | 'panel';
-    section?: string;
-  }
-  const FEATURES: Feature[] = [
-    { id: 'picker', label: 'Inspect', kind: 'tool' },
-    { id: 'screenshot', label: 'Screenshot', kind: 'tool' },
-    { id: 'pageinfo', label: 'Page Info', kind: 'tool' },
-    { id: 'a11y', label: 'A11y Audit', kind: 'tool' },
-    { id: 'perf', label: 'Performance', kind: 'tool' },
-    { id: 'console', label: 'Console', kind: 'tool' },
-    { id: 'answer', label: 'Answer Engine', kind: 'tool' },
-    { id: 'accounts', label: 'Accounts & usage', kind: 'panel', section: 'sec-accounts' },
-    { id: 'bridges', label: 'Bridges', kind: 'panel', section: 'sec-bridges' },
-  ];
+  // Every pinnable feature is declared once, in the markup: a tool button, or a section of settings.
+  const FEATURES = Array.from(document.querySelectorAll<HTMLElement>('[data-pin]'), (pin) => {
+    const id = pin.dataset.pin as string;
+    const tool = document.querySelector<HTMLElement>(`[data-tool="${id}"]`);
+    return {
+      id,
+      label: (tool ?? pin.closest('summary'))?.textContent?.trim() ?? id,
+      tool: tool !== null,
+      section: pin.closest('details.sec')?.id,
+    };
+  });
 
   function showMain() {
     settingsSection?.classList.add('hidden');
@@ -94,20 +75,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function updateSelectedModel(modelId: string) {
-    const next = normalizeModelId(modelId);
-    chrome.storage.local.set({ hanzo_selected_model: next });
-    if (modelBadge) {
-      modelBadge.textContent = MODEL_LABELS[next] || next;
-    }
-    document.querySelectorAll('.model-item').forEach((item) => {
-      const active = item.getAttribute('data-model') === next;
-      item.classList.toggle('active', active);
-    });
+  function drawModels() {
+    if (modelBadge) modelBadge.textContent = models.find((m) => m.id === selectedModel)?.name ?? selectedModel;
+    modelDropdown?.replaceChildren(
+      ...models.map((m) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = `model-item${m.id === selectedModel ? ' active' : ''}`;
+        item.innerHTML = '<div class="model-item-text"><span class="model-name"></span></div>';
+        item.querySelector('.model-name')!.textContent = m.name;
+        item.addEventListener('click', () => {
+          selectedModel = m.id;
+          chrome.storage.local.set({ hanzo_selected_model: m.id });
+          drawModels();
+          modelDropdown?.classList.add('hidden');
+          modelSelectBtn?.classList.remove('open');
+        });
+        return item;
+      }),
+    );
   }
 
   chrome.storage.local.get(['hanzo_selected_model'], (res) => {
-    updateSelectedModel(res.hanzo_selected_model || 'enso');
+    selectedModel = res.hanzo_selected_model || 'auto';
+    drawModels();
+  });
+  chrome.runtime.sendMessage({ action: 'chat.listModels' }, (resp) => {
+    if (chrome.runtime.lastError || !resp?.success) return;
+    models = [{ id: 'auto', name: 'Auto' }, ...zenModels(resp.models as Array<{ id: string; name?: string; owned_by?: string }>).map((m) => ({ id: m.id, name: m.name || m.id }))];
+    drawModels();
   });
 
   // Quiet Header: hanzo.id + X-Org-Id switcher & New Thread
@@ -183,17 +179,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.querySelectorAll('.model-item').forEach((item) => {
-    item.addEventListener('click', () => {
-      const m = item.getAttribute('data-model');
-      if (m) {
-        updateSelectedModel(m);
-        modelDropdown?.classList.add('hidden');
-        modelSelectBtn?.classList.remove('open');
-      }
-    });
-  });
-
   document.addEventListener('click', (e) => {
     if (!modelSelectBtn?.contains(e.target as Node) && !modelDropdown?.contains(e.target as Node)) {
       modelDropdown?.classList.add('hidden');
@@ -210,7 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Open panel
   const openPanel = document.getElementById('open-panel');
-  const openPageOverlay = document.getElementById('open-page-overlay'); // legacy id, may not exist
   const pinLeftBtn = document.getElementById('pin-left');
   const pinRightBtn = document.getElementById('pin-right');
   const overlayEnabledCheckbox = document.getElementById('overlay-enabled') as HTMLInputElement | null;
@@ -256,8 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Auth via background ---
   function checkAuth() {
-    // The chat view is there signed out too; only status and the sign-in
-    // banner follow the session. Which view is showing is not this function's call.
+    // Which view shows is not the session's call.
     refreshStatus();
 
     chrome.runtime.sendMessage({ action: 'auth.status' }, (response) => {
@@ -330,7 +313,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const threadEmpty = document.getElementById('thread-empty');
   let activeTabId: number | undefined;
   let busy = false;
-  let lastQuestion = '';
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
@@ -367,23 +349,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (threadEmpty) threadEmpty.classList.toggle('hidden', state.turns.length > 0);
     thread.querySelectorAll('.msg').forEach((n) => n.remove());
     const last = state.turns[state.turns.length - 1];
-    lastQuestion = [...state.turns].reverse().find((t) => t.role === 'user')?.content ?? '';
     for (const turn of state.turns) {
       const row = document.createElement('div');
       row.className = `msg msg-${turn.role}`;
       if (turn.error) {
         row.className = 'msg msg-error';
         row.textContent = turn.error;
-        if (/sign in/i.test(turn.error)) {
-          loginSection?.classList.remove('hidden');
-        } else if (lastQuestion) {
-          const retry = document.createElement('button');
-          retry.type = 'button';
-          retry.className = 'msg-retry';
-          retry.textContent = 'Retry';
-          retry.addEventListener('click', () => ask(lastQuestion));
-          row.appendChild(retry);
-        }
+        if (/sign in/i.test(turn.error)) loginSection?.classList.remove('hidden');
       } else if (turn.role === 'assistant') {
         row.innerHTML = renderMarkdown(turn.content);
       } else if (turn.role === 'step') {
@@ -408,29 +380,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!q || busy) return;
     if (searchInput) searchInput.value = '';
     resizeComposer();
-    chrome.storage.local.get(['hanzo_selected_model'], (res) => {
-      chrome.runtime.sendMessage(
-        { action: 'agent.send', text: q, model: normalizeModelId(res.hanzo_selected_model), tabId: activeTabId, orgId: activeOrgId || undefined },
-        (resp) => {
-          if (chrome.runtime.lastError || !resp?.success) {
-            // Not a turn of the thread: say it where the thread is, and leave the thread be.
-            const row = document.createElement('div');
-            row.className = 'msg msg-error';
-            row.textContent = resp?.error || chrome.runtime.lastError?.message || 'The agent is not running.';
-            thread?.appendChild(row);
-            if (thread) thread.scrollTop = thread.scrollHeight;
-          }
-        },
-      );
-    });
+    const model = pickModelForTokenBudget(selectedModel, models.map((m) => m.id), estimateMessageTokens([{ role: 'user', content: q }]));
+    chrome.runtime.sendMessage(
+      { action: 'agent.send', text: q, model, tabId: activeTabId, orgId: activeOrgId || undefined },
+      (resp) => {
+        if (chrome.runtime.lastError || !resp?.success) {
+          const row = document.createElement('div');
+          row.className = 'msg msg-error';
+          row.textContent = resp?.error || chrome.runtime.lastError?.message || 'The agent is not running.';
+          thread?.appendChild(row);
+          if (thread) thread.scrollTop = thread.scrollHeight;
+        }
+      },
+    );
   }
 
   function stop() {
     chrome.runtime.sendMessage({ action: 'agent.stop' }, () => void chrome.runtime.lastError);
   }
 
-  // The thread arrives once on connect and again after every change. A worker
-  // stopped under the popup closes the port; connecting again wakes it.
+  // The thread arrives on connect and after every change; a stopped worker closes the port, so connect again.
   function follow() {
     const port = chrome.runtime.connect({ name: 'agent' });
     port.onMessage.addListener((m) => {
@@ -524,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { label: 'Chat on the page', hint: 'Panel', run: () => openPanel?.click() },
     { label: 'Open the answer engine', hint: 'Tab', run: () => openSearch(searchInput?.value.trim() || '') },
     { label: 'Settings', hint: 'Prefs', run: () => showSettings() },
-    ...FEATURES.map((f) => ({ label: f.label, hint: f.kind === 'tool' ? 'Tool' : 'Settings', run: () => runFeature(f.id, null) })),
+    ...FEATURES.map((f) => ({ label: f.label, hint: f.tool ? 'Tool' : 'Settings', run: () => runFeature(f.id, null) })),
   ];
   let cmdActive = 0;
 
@@ -706,66 +675,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (url.startsWith('moz-extension://')) return false;
     return true;
   }
-
-  openPageOverlay?.addEventListener('click', () => {
-    openPageOverlay.textContent = 'Opening...';
-    openPageOverlay.setAttribute('disabled', 'true');
-
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
-      let targetTab = isInjectableTab(activeTab) ? activeTab : null;
-
-      if (!targetTab) {
-        chrome.tabs.query({ currentWindow: true }, (allTabs) => {
-          targetTab = allTabs.find((tab) => isInjectableTab(tab)) || null;
-          if (!targetTab?.id) {
-            openPageOverlay.textContent = 'No valid page tab';
-            setTimeout(() => {
-              openPageOverlay.textContent = 'Toggle On-Page Overlay';
-              openPageOverlay.removeAttribute('disabled');
-            }, 1200);
-            return;
-          }
-
-          chrome.runtime.sendMessage({ action: 'page.overlay.toggle', tabId: targetTab.id }, (response) => {
-            if (chrome.runtime.lastError || !response?.success) {
-              openPageOverlay.textContent = 'Unavailable on this page';
-            } else {
-              const opened = !!response?.open;
-              openPageOverlay.textContent = opened ? 'Overlay Opened' : 'Overlay Hidden';
-            }
-            setTimeout(() => {
-              openPageOverlay.textContent = 'Toggle On-Page Overlay';
-              openPageOverlay.removeAttribute('disabled');
-            }, 900);
-          });
-        });
-        return;
-      }
-
-      if (!targetTab?.id) {
-        openPageOverlay.textContent = 'No Active Tab';
-        setTimeout(() => {
-          openPageOverlay.textContent = 'Toggle On-Page Overlay';
-          openPageOverlay.removeAttribute('disabled');
-        }, 1200);
-        return;
-      }
-
-      chrome.runtime.sendMessage({ action: 'page.overlay.toggle', tabId: targetTab.id }, (response) => {
-        if (chrome.runtime.lastError || !response?.success) {
-          openPageOverlay.textContent = 'Unavailable on this page';
-        } else {
-          const opened = !!response?.open;
-          openPageOverlay.textContent = opened ? 'Overlay Opened' : 'Overlay Hidden';
-        }
-        setTimeout(() => {
-          openPageOverlay.textContent = 'Toggle On-Page Overlay';
-          openPageOverlay.removeAttribute('disabled');
-        }, 900);
-      });
-    });
-  });
 
   // --- Status ---
   function setStatus(dot: HTMLElement, detail: HTMLElement, connected: boolean, text: string) {
@@ -1048,8 +957,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Each tool takes the button that was pressed — the one in settings or the
-  // pinned chip — so its feedback lands where the person is looking.
+  // A tool takes the button pressed (settings or pinned chip), so its feedback lands there.
   const RUN: Record<string, (btn: HTMLElement) => Promise<void>> = {
     // Element Picker / Selector tool
     async picker(btn) {
@@ -1199,7 +1107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function runFeature(id: string, btn: HTMLElement | null) {
     const feature = FEATURES.find((f) => f.id === id);
     if (!feature) return;
-    if (feature.kind === 'panel') {
+    if (!feature.tool) {
       showSettings(feature.section);
       return;
     }

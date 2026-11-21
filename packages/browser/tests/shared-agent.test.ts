@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../src/shared/drive.js', () => ({ drive: vi.fn() }));
 
 import { drive } from '../src/shared/drive.js';
-import { MAX_RESULT, TOOLS, converse, label, parse, render, startAgent, type AgentState } from '../src/shared/agent.js';
+import { MAX_RESULT, MAX_STEPS, TOOLS, converse, label, parse, render, startAgent, type AgentState } from '../src/shared/agent.js';
 
 const driven = vi.mocked(drive);
 
@@ -39,7 +39,6 @@ describe('converse', () => {
     const gw = gateway(wants(call('c1', 'snapshot', { interactive: true })), says('Found it.'));
     const steps: string[] = [];
     const out = await converse({
-      base: 'https://gw.test',
       token: 'tok',
       orgId: 'acme',
       model: 'zen6',
@@ -51,7 +50,7 @@ describe('converse', () => {
 
     expect(out).toBe('Found it.');
     expect(steps).toEqual(['snapshot']);
-    expect(gw.requests[0].url).toBe('https://gw.test/v1/chat/completions');
+    expect(gw.requests[0].url).toBe('https://api.hanzo.ai/v1/chat/completions');
     expect(gw.requests[0].headers).toMatchObject({ Authorization: 'Bearer tok', 'X-Org-Id': 'acme' });
     expect(gw.requests[0].body).toMatchObject({ model: 'zen6', stream: false, tool_choice: 'auto' });
     expect(gw.requests[0].body.tools.map((t: any) => t.function.name)).toEqual(['snapshot', 'read', 'act', 'navigate', 'wait']);
@@ -99,12 +98,12 @@ describe('converse', () => {
   });
 
   it('stops a model that never answers in words', async () => {
-    const forever = Array.from({ length: 5 }, (_, i) => wants(call(`c${i}`, 'snapshot', {})));
+    const forever = Array.from({ length: MAX_STEPS + 1 }, (_, i) => wants(call(`c${i}`, 'snapshot', {})));
     const gw = gateway(...forever);
     await expect(
-      converse({ token: 't', model: 'm', messages: [], fetch: gw.fetch, step: () => {}, call: async () => 'x', max: 3 }),
-    ).rejects.toThrow('Stopped after 3 steps');
-    expect(gw.requests).toHaveLength(3);
+      converse({ token: 't', model: 'm', messages: [], fetch: gw.fetch, step: () => {}, call: async () => 'x' }),
+    ).rejects.toThrow(`Stopped after ${MAX_STEPS} steps`);
+    expect(gw.requests).toHaveLength(MAX_STEPS);
   });
 
   it('stops between calls once aborted', async () => {
@@ -228,7 +227,6 @@ describe('the agent', () => {
       ['step', 'click @e1'],
       ['assistant', 'Bought.'],
     ]);
-    expect(agent.state.page).toEqual({ id: 7, title: 'Shop', url: 'https://shop.test/' });
     // The system prompt names the tab, and the org rides along from storage.
     expect(gw.requests[0].body.messages[0].content).toContain('"Shop" (https://shop.test/)');
     expect(gw.requests[0].headers['X-Org-Id']).toBe('acme');
@@ -309,7 +307,6 @@ describe('the agent', () => {
     await settled(agent);
     expect(driven).not.toHaveBeenCalled();
     expect(gw.requests[1].body.messages.at(-1).content).toBe('error: there is no open tab to work on');
-    expect(agent.state.page).toBeNull();
   });
 
   it('stops the turn in flight', async () => {
@@ -346,11 +343,11 @@ describe('the agent', () => {
 
   it('hands a surface the thread the moment it connects, even after the worker restarted', async () => {
     const api = fakeApi();
-    api.stores.session.agentThread = { turns: [{ id: 'a', role: 'user', content: 'before' }], page: null };
+    api.stores.session.agentThread = { turns: [{ id: 'a', role: 'user', content: 'before' }] };
     startAgent({ api, token: async () => 't' });
     const surface = api.open();
     await vi.waitFor(() => expect(surface.got).toHaveLength(1));
-    expect(surface.got[0]).toEqual({ turns: [{ id: 'a', role: 'user', content: 'before' }], busy: false, page: null });
+    expect(surface.got[0]).toEqual({ turns: [{ id: 'a', role: 'user', content: 'before' }], busy: false });
   });
 
   it('ignores a port that is not the agent\'s, and stops sending to one that closed', async () => {
@@ -377,7 +374,7 @@ describe('the agent', () => {
     });
     await settled(agent);
     expect(api.tabs.get).toHaveBeenCalledWith(42);
-    expect(agent.state.page).toEqual({ id: 42, title: 'From the overlay', url: 'https://o.test/' });
+    expect(gw.requests[0].body.messages[0].content).toContain('"From the overlay" (https://o.test/)');
     expect(gw.requests[0].body.messages[0].content).toContain('ElementSelector: #hero');
   });
 });
