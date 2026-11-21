@@ -1166,9 +1166,63 @@ document.addEventListener('DOMContentLoaded', () => {
   const onOpen: Record<string, () => void> = {
     'sec-accounts': () => { loadUsage(); refreshConnectedAccounts(); },
     'sec-bridges': () => refreshStatus(),
+    'sec-linked': () => drawLinked(),
   };
   document.querySelectorAll<HTMLDetailsElement>('details.sec').forEach((d) => {
     d.addEventListener('toggle', () => { if (d.open) onOpen[d.id]?.(); });
+  });
+
+  // --- Linked to Hanzo: this browser as a source (HIP-1350). ---
+  const linkedStatus = document.getElementById('linked-status') as HTMLElement;
+  const linkedLink = document.getElementById('linked-link') as HTMLButtonElement;
+  const linkedUnlink = document.getElementById('linked-unlink') as HTMLButtonElement;
+  const linkedSources = document.getElementById('linked-sources') as HTMLElement;
+  const linkedBeat = document.getElementById('linked-beat') as HTMLElement;
+  const linkedOutbox = document.getElementById('linked-outbox') as HTMLElement;
+
+  const toBackground = (message: Record<string, unknown>) =>
+    new Promise<any>((resolve) => chrome.runtime.sendMessage(message, (r) => resolve(chrome.runtime.lastError ? { success: false, error: chrome.runtime.lastError.message } : r)));
+
+  async function drawLinked() {
+    const [st, out] = await Promise.all([toBackground({ action: 'source.status' }), toBackground({ action: 'source.outbox' })]);
+    const linked = !!st?.linked;
+    linkedStatus.textContent = !linked
+      ? 'Not linked.'
+      : st.error
+        ? `Linked, last heartbeat failed: ${st.error}`
+        : st.lastAt ? `Linked. Last heartbeat ${new Date(st.lastAt).toLocaleTimeString()}.` : 'Linked.';
+    linkedLink.classList.toggle('hidden', linked);
+    linkedUnlink.classList.toggle('hidden', !linked);
+    linkedBeat.textContent = st?.lastBeat ? JSON.stringify(JSON.parse(st.lastBeat), null, 2) : 'Nothing sent yet.';
+    linkedOutbox.textContent = JSON.stringify(out?.batches ?? [], null, 2);
+    linkedSources.replaceChildren();
+    if (!isAuthenticated) return;
+    const list = await toBackground({ action: 'source.list' });
+    for (const s of list?.sources ?? []) {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = `${s.name} (${s.kind})`;
+      const state = document.createElement('span');
+      state.textContent = s.state;
+      li.append(name, state);
+      linkedSources.append(li);
+    }
+  }
+
+  linkedLink.addEventListener('click', async () => {
+    linkedLink.disabled = true;
+    if (!isAuthenticated) await toBackground({ action: 'auth.login' });
+    const r = await toBackground({ action: 'source.link' });
+    linkedLink.disabled = false;
+    await checkAuth();
+    await drawLinked();
+    if (!r?.success) linkedStatus.textContent = r?.error ?? 'Link failed.';
+  });
+
+  linkedUnlink.addEventListener('click', async () => {
+    const r = await toBackground({ action: 'source.unlink' });
+    await drawLinked();
+    if (!r?.success) linkedStatus.textContent = r?.error ?? 'Unlink failed.';
   });
 
   // --- AI Usage (Claude + Codex) — data fetched by the background context

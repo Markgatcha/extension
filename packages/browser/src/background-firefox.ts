@@ -20,6 +20,7 @@ import 'webextension-polyfill';
 import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
 import { startZap } from './shared/zap.js';
 import { startAgent } from './shared/agent.js';
+import { startSource } from './shared/source.js';
 import { fetchAllUsage } from './shared/usage.js';
 import {
   getRagConfig,
@@ -1644,6 +1645,9 @@ browser.runtime.onMessage.addListener((request: any, sender: any, sendResponse: 
     if (typeof request.action === 'string' && agent.handle(request.action, request, sendResponse, sender)) {
       return;
     }
+    if (typeof request.action === 'string' && source.handle(request.action, request, sendResponse)) {
+      return;
+    }
 
     switch (request.action) {
       // Snapshot → ref engine, for the extension's own pages
@@ -2736,6 +2740,9 @@ const agent = startAgent({
   api: browser,
   token: () => getValidAccessToken().then((t) => t ?? undefined),
 });
+
+// The linked source: this browser as a source of kind "browser" (HIP-1350).
+const source = startSource({ api: browser, token: () => getValidAccessToken() });
 
 // =============================================================================
 // Keep-alive — two-layer:

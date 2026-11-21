@@ -10,6 +10,7 @@ import 'webextension-polyfill';
 import type { ControlSession, RagSnippet, RagQueryParams } from './shared/types.js';
 import { startZap } from './shared/zap.js';
 import { startAgent } from './shared/agent.js';
+import { startSource } from './shared/source.js';
 import {
   getRagConfig as getSharedRagConfig,
   normalizeRagSnippets,
@@ -407,6 +408,7 @@ async function handleMessage(request: any, sender: chrome.runtime.MessageSender,
   // --- ZAP: status and pairing (shared/zap.ts) ---
   if (typeof request.action === 'string' && zap.handle(request.action, request, sendResponse as (r: any) => void)) return;
   if (typeof request.action === 'string' && agent.handle(request.action, request, sendResponse as (r: any) => void, sender)) return;
+  if (typeof request.action === 'string' && source.handle(request.action, request, sendResponse as (r: any) => void)) return;
 
   if (typeof request.action === 'string' && LASTPASS_METHODS.has(request.action)) {
     try {
@@ -2025,6 +2027,9 @@ const agent = startAgent({
   api: chrome,
   token: () => auth.getValidAccessToken().then((t) => t ?? undefined),
 });
+
+// 3. The linked source: this browser as a source of kind "browser" (HIP-1350).
+const source = startSource({ api: chrome, token: () => auth.getValidAccessToken() });
 
 // Keep-alive — Layer 1: Port. Content scripts in every loaded http(s) tab
 // hold a `zap-keepalive` port. As long as ANY tab has one, Chrome keeps

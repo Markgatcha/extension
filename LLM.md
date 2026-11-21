@@ -364,3 +364,17 @@ but does NOT give WebKit `chrome.debugger` — so dispatch must become portable
    permission, or `background-firefox.ts` appears.
 
 Large, multi-phase — do it as a focused pass, never half-merged.
+
+The browser is a linked source of kind `browser` (HIP-1350, `packages/browser/src/shared/source.ts`).
+Sign-in is the extension's IAM session; the device key is an Ed25519 WebCrypto pair, private half
+non-extractable, in IndexedDB (`hanzo-source`). Register `POST /v1/sources`, then a signed heartbeat
+on a `chrome.alarms`/`browser.alarms` period of 0.5 min (the 30 s floor of MV3 Chrome 120+; cloud
+reads 90 s as online; a worker that wakes late just beats late). The signed bytes are cloud's
+`beatMessage` in `apps/source/source.go`; the signature rides in the body as `sig`. A 410 forgets the
+link. Providers are state only: a session cookie's existence (`cookies.get`, reduced to a boolean in
+`cookieChecker`) for chatgpt, claude, gemini, grok, perplexity, copilot (github.com), cursor; the
+cookie names are unverified against the live sites, and none signed in sends an empty list. Ed25519
+WebCrypto needs Chrome 137+ / Firefox 129+; below that Link reports it. A browser source is not
+routable: no code submits to or reads a consumer AI page. `source-usage.ts` holds the HIP
+UsageRecord builder and a local outbox (last 100 batches) shown in the popup; nothing sends it
+until cloud has the usage op (slice 3).
