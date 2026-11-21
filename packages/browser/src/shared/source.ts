@@ -39,6 +39,8 @@ export interface SourceProvider {
   kind: 'login';
   state: 'ready';
   plan?: string;
+  /** A browser source shares nothing: always false. */
+  shared: false;
 }
 
 export interface Beat {
@@ -78,6 +80,7 @@ export async function detectProviders(has: HasCookie): Promise<SourceProvider[]>
     instance: `${p.provider}-1`,
     kind: 'login' as const,
     state: 'ready' as const,
+    shared: false as const,
   }));
 }
 
@@ -87,7 +90,7 @@ export async function detectProviders(has: HasCookie): Promise<SourceProvider[]>
 export function beatMessage(id: string, b: Beat): Uint8Array {
   let m = MESSAGE_PREFIX;
   for (const v of [id, b.at, b.version, b.zap, String(b.busy)]) m += `${v}\n`;
-  for (const p of b.providers) m += `${[p.provider, p.instance, p.kind, p.state, p.plan ?? ''].join(',')}\n`;
+  for (const p of b.providers) m += `${[p.provider, p.instance, p.kind, p.state, p.plan ?? '', String(p.shared)].join(',')}\n`;
   return new TextEncoder().encode(m);
 }
 

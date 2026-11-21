@@ -34,23 +34,23 @@ describe('heartbeat signing bytes', () => {
   it('matches the hand-written message for a fixed beat', () => {
     const bytes = beatMessage(ID, {
       at: '2026-11-20T10:00:00Z',
-      version: '1.9.75',
-      zap: '',
+      version: '1.8.4',
+      zap: 'https://mac.example/zap',
       busy: 0,
       providers: [
-        { provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready', plan: 'max' },
-        { provider: 'chatgpt', instance: 'chatgpt-1', kind: 'login', state: 'ready' },
-      ],
+        { provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready', plan: 'max', shared: true },
+        { provider: 'openai', instance: 'key-1', kind: 'key', state: 'limited', shared: false },
+      ] as any,
     });
     expect(dec(bytes)).toBe(
       'hanzo-source-heartbeat/1\n' +
         'src_0123456789abcdef0123456789abcdef\n' +
         '2026-11-20T10:00:00Z\n' +
-        '1.9.75\n' +
-        '\n' +
+        '1.8.4\n' +
+        'https://mac.example/zap\n' +
         '0\n' +
-        'claude,claude-1,login,ready,max\n' +
-        'chatgpt,chatgpt-1,login,ready,\n',
+        'claude,claude-1,login,ready,max,true\n' +
+        'openai,key-1,key,limited,,false\n',
     );
   });
 
@@ -76,10 +76,10 @@ describe('provider detection', () => {
     const present = new Set(['https://claude.ai/|sessionKey', 'https://github.com/|user_session']);
     const found = await detectProviders(async (url, name) => present.has(`${url}|${name}`));
     expect(found).toEqual([
-      { provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready' },
-      { provider: 'copilot', instance: 'copilot-1', kind: 'login', state: 'ready' },
+      { provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready', shared: false },
+      { provider: 'copilot', instance: 'copilot-1', kind: 'login', state: 'ready', shared: false },
     ]);
-    for (const p of found) expect(Object.keys(p).sort()).toEqual(['instance', 'kind', 'provider', 'state']);
+    for (const p of found) expect(Object.keys(p).sort()).toEqual(['instance', 'kind', 'provider', 'shared', 'state']);
   });
 
   it('is empty when nothing is signed in', async () => {
@@ -143,7 +143,7 @@ describe('link and heartbeat', () => {
     expect(hb.url).toBe(`https://api.test/v1/sources/${ID}/heartbeat`);
     const body = JSON.parse(hb.init.body as string);
     expect(Object.keys(body).sort()).toEqual(['at', 'busy', 'providers', 'sig', 'version', 'zap']);
-    expect(body.providers).toEqual([{ provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready' }]);
+    expect(body.providers).toEqual([{ provider: 'claude', instance: 'claude-1', kind: 'login', state: 'ready', shared: false }]);
     expect(hb.init.body as string).not.toMatch(/iam-access-token|cookie|token|email|password/i);
     expect((await source.status()).lastBeat).toBe(hb.init.body);
   });
