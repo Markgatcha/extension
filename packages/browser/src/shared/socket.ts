@@ -178,7 +178,8 @@ async function verify(key: Bytes, label: string, nc: Uint8Array, ns: Uint8Array,
 }
 
 /** Why the last attempt failed, for the popup. */
-export type ZapError = '' | 'no-router' | 'refused' | 'mismatch';
+export type ZapError = '' | 'no-router' | 'refused' | 'mismatch' | 'native-host-missing' | 'permission';
+export type ZapErrorKind = 'none' | 'native_host' | 'permission' | 'transport' | 'auth';
 
 export interface ZapState {
   /** The router lists us — not merely "a link is open". */
@@ -193,17 +194,22 @@ export interface ZapState {
   providerId: string;
   /** What the router's registry says this browser serves. */
   caps: string[];
+  /** Count of local MCP consumer nodes (`mcp/*`) visible on the ZAP router. */
+  mcpConsumers: number;
   /** When the outstanding registry probe was sent, or 0. */
   probedAt: number;
   pairing: Pairing | null;
   /** Native messaging host: unknown until tried, then whether it answered.
    *  A retry on the backoff asks again. */
   native: boolean | null;
+  /** Last error reported by chrome.runtime.connectNative, if any. */
+  nativeError: string;
   /** Which well-known door port to try next when unpaired. */
   scan: number;
   /** The well-known port a sweep starts from: the last one that answered. */
   home: number;
   error: ZapError;
+  errorKind: ZapErrorKind;
   timer: ReturnType<typeof setTimeout> | null;
   backoff: number;
 }
@@ -226,8 +232,8 @@ export const WELL_KNOWN = [9998, 21000, 21001, 21002, 21003, 21004, 21005, 21006
 
 export function newZapState(providerId: string): ZapState {
   return {
-    connected: false, socket: null, authed: false, since: 0, providerId, caps: [], probedAt: 0,
-    pairing: null, native: null, scan: 0, home: 0, error: '', timer: null, backoff: BACKOFF_MIN,
+    connected: false, socket: null, authed: false, since: 0, providerId, caps: [], mcpConsumers: 0, probedAt: 0,
+    pairing: null, native: null, nativeError: '', scan: 0, home: 0, error: '', errorKind: 'none', timer: null, backoff: BACKOFF_MIN,
   };
 }
 
@@ -250,6 +256,7 @@ function send(link: Link, t: number, to: string, payload?: Uint8Array, from = ''
 function offline(state: ZapState) {
   state.connected = false;
   state.caps = [];
+  state.mcpConsumers = 0;
 }
 
 /** Close the link we hold, if any, and forget it. */
@@ -287,18 +294,26 @@ function onFrame(state: ZapState, link: Link, f: Frame, opts: ZapOpts) {
       // with its host stamped in. Registration is confirmed by the registry.
       if (f.to) state.providerId = f.to;
       state.error = '';
+      state.errorKind = 'none';
       state.backoff = BACKOFF_MIN;
       state.probedAt = Date.now();
       send(link, PROVIDERS_LIST, '');
       break;
     case PROVIDERS: {
       state.probedAt = 0;
-      const mine = decodeProviders(f.payload).find((p) => p.id === state.providerId);
+      const providers = decodeProviders(f.payload);
+      const mine = providers.find((p) => p.id === state.providerId);
+      const mcpCount = providers.filter((p) => p.id.startsWith('mcp/') || p.role === 2).length;
       if (!!mine !== state.connected) {
         opts.log(`[Hanzo/ZAP] ${mine ? 'registered' : 'dropped by router'} (${link.kind}): ${state.providerId}`);
       }
       state.connected = !!mine;
       state.caps = mine ? mine.caps : [];
+      state.mcpConsumers = mine ? mcpCount : 0;
+      if (mine) {
+        state.error = '';
+        state.errorKind = 'none';
+      }
       break;
     }
     case ERROR:
@@ -388,11 +403,21 @@ function connectNative(state: ZapState, opts: ZapOpts): boolean {
     // it). Either way this browser's way in is the door.
     if (!heard) {
       state.native = false;
+      state.nativeError = why;
+      const lowerWhy = why.toLowerCase();
+      if (lowerWhy.includes('forbidden') || lowerWhy.includes('permission') || lowerWhy.includes('not allowed')) {
+        state.error = 'permission';
+        state.errorKind = 'permission';
+      } else if (why) {
+        state.error = 'native-host-missing';
+        state.errorKind = 'native_host';
+      }
       drop(state);
       opts.log('[Hanzo/ZAP] native host unavailable' + (why ? ' (' + why + ')' : '') + ' — joining the door');
       ensureZap(state, opts);
       return;
     }
+    state.errorKind = 'transport';
     lost(state, opts, 'native host exited' + (why ? ': ' + why : ''));
   });
 
@@ -455,6 +480,7 @@ function connectDoor(state: ZapState, opts: ZapOpts, pairing: Pairing | null) {
       const ns = f.payload.slice(0, 32);
       if (!(await verify(pairing.key, 'zap router', nc, ns, f.payload.slice(32)))) {
         state.error = 'mismatch';
+        state.errorKind = 'auth';
         opts.log('[Hanzo/ZAP] the router on ' + url + ' does not hold our pairing token — pair again');
         drop(state);
         return;
@@ -481,13 +507,19 @@ function connectDoor(state: ZapState, opts: ZapOpts, pairing: Pairing | null) {
         return;
       }
       state.error = 'no-router';
+      if (state.errorKind === 'none') {
+        state.errorKind = state.nativeError ? 'native_host' : 'transport';
+      }
       lost(state, opts, 'no router on the well-known ports');
       return;
     }
     // Never opened: nothing listens there (or the door refused our origin).
     // Opened but closed before the router's proof: the router refused us. A
     // mismatch has already said so above.
-    if (!proven && state.error !== 'mismatch') state.error = opened ? 'refused' : 'no-router';
+    if (!proven && state.error !== 'mismatch') {
+      state.error = opened ? 'refused' : 'no-router';
+      state.errorKind = opened ? 'permission' : 'transport';
+    }
     lost(state, opts, 'door closed');
   };
 }

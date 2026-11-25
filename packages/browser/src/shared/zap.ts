@@ -72,10 +72,14 @@ export function startZap(given: ZapOpts & { engine: string; storage: ZapStorage 
               connected: state.connected,
               transport: state.socket?.kind ?? '',
               native: state.native,
+              nativeError: state.nativeError,
               paired: !!state.pairing,
               providerId: state.providerId,
               caps: state.caps,
+              mcpConsumers: state.mcpConsumers,
+              mcpReachable: state.connected && state.mcpConsumers > 0,
               error: state.error,
+              errorKind: state.errorKind,
             },
           });
           return true;

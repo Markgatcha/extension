@@ -55,7 +55,14 @@ describe('startZap', () => {
   it('does not dial until paired, and reports itself unpaired', async () => {
     const { zap } = start();
     const status = await ask(zap, 'zap.status');
-    expect(status.zap).toMatchObject({ connected: false, paired: false });
+    expect(status.zap).toMatchObject({
+      connected: false,
+      paired: false,
+      mcpConsumers: 0,
+      mcpReachable: false,
+      nativeError: '',
+      errorKind: 'none',
+    });
     expect(sockets).toEqual([]);
   });
 

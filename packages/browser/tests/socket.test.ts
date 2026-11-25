@@ -416,7 +416,31 @@ describe('native messaging', () => {
     first.gone();
     expect(s.native).toBe(true);
     expect(s.socket).toBeNull();
+    expect(s.errorKind).toBe('transport');
     vi.advanceTimersByTime(300);
     expect(FakePort.last).not.toBe(first);
+  });
+
+  it('counts mcp/* consumer nodes from PROVIDERS and classifies native host errors', () => {
+    const s = newZapState('browser/chrome-3fa2');
+    ensureZap(s, opts());
+    FakePort.last!.gone('Access to the specified native messaging host is forbidden.');
+    expect(s.error).toBe('permission');
+    expect(s.errorKind).toBe('permission');
+    expect(s.nativeError).toContain('forbidden');
+
+    const s2 = newZapState('browser/chrome-3fa2');
+    ensureZap(s2, opts());
+    const port = FakePort.last!;
+    port.recv(WELCOME, 'zapd', ID);
+    port.recv(PROVIDERS, 'zapd', ID, providers([ID, 'mcp/mac/codex-1', 'mcp/mac/claude-2']));
+    expect(s2.connected).toBe(true);
+    expect(s2.mcpConsumers).toBe(2);
+    expect(s2.error).toBe('');
+    expect(s2.errorKind).toBe('none');
+
+    port.gone('Native host has exited.');
+    expect(s2.connected).toBe(false);
+    expect(s2.mcpConsumers).toBe(0);
   });
 });

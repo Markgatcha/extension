@@ -706,23 +706,53 @@ document.addEventListener('DOMContentLoaded', () => {
   } catch { /* ignore URL param errors */ }
 
   function refreshStatus() {
-    // ZAP Bridge
+    // ZAP Bridge + MCP reachability
     chrome.runtime.sendMessage({ action: 'zap.status' }, (response) => {
       if (chrome.runtime.lastError) return;
       if (response?.success) {
         const zap = response.zap;
-        const text = zap.connected ? `${zap.caps?.length || 0} tools`
-          : !zap.paired ? 'Not paired'
-          : zap.error === 'no-router' ? 'No router — start hanzo-mcp'
-          : zap.error === 'mismatch' ? 'Pairing mismatch — pair again'
-          : zap.error === 'refused' ? 'Router refused this browser'
+        const transportLabel = zap.transport === 'native' ? 'native ZAP' : zap.transport === 'door' ? 'WS door' : 'ZAP';
+        const text = zap.connected
+          ? `${transportLabel} · ${zap.caps?.length || 0} caps`
+          : zap.errorKind === 'native_host'
+          ? 'Native host missing — run `hanzo mcp doctor --fix`'
+          : zap.errorKind === 'permission' || zap.error === 'permission'
+          ? 'Permission denied by browser/router'
+          : !zap.paired && zap.error === 'no-router'
+          ? 'No local router — start hanzo-mcp'
+          : !zap.paired
+          ? 'Waiting for local router'
+          : zap.error === 'no-router'
+          ? 'No router — start hanzo-mcp'
+          : zap.error === 'mismatch'
+          ? 'Pairing mismatch — pair again'
+          : zap.error === 'refused'
+          ? 'Router refused this browser'
           : 'Connecting…';
         setStatus(zapStatus, zapDetail, zap.connected, text);
-        if (headerZapDot) {
-          headerZapDot.classList.toggle('connected', Boolean(zap.connected));
-          headerZapDot.title = zap.connected ? `ZAP connected (${zap.caps?.length || 0} tools)` : `ZAP: ${text}`;
-        }
         zapPair.hidden = zap.connected || (zap.paired && zap.error !== 'mismatch');
+
+        if (zap.connected && zap.mcpReachable) {
+          const n = zap.mcpConsumers || 1;
+          if (headerZapDot) {
+            headerZapDot.classList.add('connected');
+            headerZapDot.title = `MCP reachable (${n} client${n === 1 ? '' : 's'} via ${transportLabel})`;
+          }
+          setStatus(mcpStatus, mcpPort, true, `${n} local client${n === 1 ? '' : 's'} (${transportLabel})`);
+        } else if (zap.connected) {
+          if (headerZapDot) {
+            headerZapDot.classList.add('connected');
+            headerZapDot.title = `ZAP connected (${transportLabel} · ${zap.caps?.length || 0} caps)`;
+          }
+          setStatus(mcpStatus, mcpPort, true, `Router ready (${transportLabel})`);
+        } else {
+          const kind = zap.errorKind && zap.errorKind !== 'none' ? `[${zap.errorKind}] ` : '';
+          if (headerZapDot) {
+            headerZapDot.classList.remove('connected');
+            headerZapDot.title = `ZAP: ${kind}${text}${zap.nativeError ? ` (${zap.nativeError})` : ''}`;
+          }
+          setStatus(mcpStatus, mcpPort, false, text);
+        }
       }
     });
 
@@ -734,29 +764,6 @@ document.addEventListener('DOMContentLoaded', () => {
         setStatus(cdpStatus, cdpDetail, true, browsers.length ? `Connected` : 'Connected');
       } else {
         setStatus(cdpStatus, cdpDetail, false, 'Not connected');
-      }
-    });
-
-    // MCP Bridge — probe the configured port (default 9224 for hanzo-mcp HTTP).
-    // Falls back to 9224 only if storage hasn't been written yet, but always
-    // SHOWS the actual port that was probed so the user isn't lied to.
-    chrome.storage.local.get(['mcpBridgePort'], (s) => {
-      const probePort = Number(s.mcpBridgePort) || 9224;
-      const url = `http://localhost:${probePort}`;
-      const offline = () => setStatus(mcpStatus, mcpPort, false, `:${probePort} offline`);
-      try {
-        fetch(url, { signal: AbortSignal.timeout(2000) })
-          .then(r => r.json())
-          .then(data => {
-            if (data?.service === 'hanzo.browser') {
-              setStatus(mcpStatus, mcpPort, true, `:${probePort} OK`);
-            } else {
-              setStatus(mcpStatus, mcpPort, false, `:${probePort} N/A`);
-            }
-          })
-          .catch(offline);
-      } catch {
-        offline();
       }
     });
 
