@@ -708,51 +708,39 @@ document.addEventListener('DOMContentLoaded', () => {
   function refreshStatus() {
     // ZAP Bridge + MCP reachability
     chrome.runtime.sendMessage({ action: 'zap.status' }, (response) => {
-      if (chrome.runtime.lastError) return;
-      if (response?.success) {
-        const zap = response.zap;
-        const transportLabel = zap.transport === 'native' ? 'native ZAP' : zap.transport === 'door' ? 'WS door' : 'ZAP';
-        const text = zap.connected
-          ? `${transportLabel} · ${zap.caps?.length || 0} caps`
-          : zap.errorKind === 'native_host'
-          ? 'Native host missing — run `hanzo mcp doctor --fix`'
-          : zap.errorKind === 'permission' || zap.error === 'permission'
-          ? 'Permission denied by browser/router'
-          : !zap.paired && zap.error === 'no-router'
-          ? 'No local router — start hanzo-mcp'
-          : !zap.paired
-          ? 'Waiting for local router'
-          : zap.error === 'no-router'
-          ? 'No router — start hanzo-mcp'
-          : zap.error === 'mismatch'
-          ? 'Pairing mismatch — pair again'
-          : zap.error === 'refused'
-          ? 'Router refused this browser'
-          : 'Connecting…';
-        setStatus(zapStatus, zapDetail, zap.connected, text);
-        zapPair.hidden = zap.connected || (zap.paired && zap.error !== 'mismatch');
+      if (chrome.runtime.lastError || !response?.success) return;
+      const zap = response.zap;
+      const via = zap.transport === 'native' ? 'native ZAP' : zap.transport === 'door' ? 'WS door' : 'ZAP';
+      const text = zap.connected
+        ? `${via} · ${zap.caps?.length || 0} caps`
+        : zap.errorKind === 'native_host'
+        ? 'Native host missing — run `hanzo mcp doctor --fix`'
+        : zap.errorKind === 'permission' || zap.error === 'permission'
+        ? 'Permission denied by browser/router'
+        : zap.error === 'no-router'
+        ? 'No router — start hanzo-mcp'
+        : zap.error === 'mismatch'
+        ? 'Pairing mismatch — pair again'
+        : zap.error === 'refused'
+        ? 'Router refused this browser'
+        : !zap.paired
+        ? 'Waiting for local router'
+        : 'Connecting…';
+      setStatus(zapStatus, zapDetail, zap.connected, text);
+      zapPair.hidden = zap.connected || (zap.paired && zap.error !== 'mismatch');
 
-        if (zap.connected && zap.mcpReachable) {
-          const n = zap.mcpConsumers || 1;
-          if (headerZapDot) {
-            headerZapDot.classList.add('connected');
-            headerZapDot.title = `MCP reachable (${n} client${n === 1 ? '' : 's'} via ${transportLabel})`;
-          }
-          setStatus(mcpStatus, mcpPort, true, `${n} local client${n === 1 ? '' : 's'} (${transportLabel})`);
-        } else if (zap.connected) {
-          if (headerZapDot) {
-            headerZapDot.classList.add('connected');
-            headerZapDot.title = `ZAP connected (${transportLabel} · ${zap.caps?.length || 0} caps)`;
-          }
-          setStatus(mcpStatus, mcpPort, true, `Router ready (${transportLabel})`);
-        } else {
-          const kind = zap.errorKind && zap.errorKind !== 'none' ? `[${zap.errorKind}] ` : '';
-          if (headerZapDot) {
-            headerZapDot.classList.remove('connected');
-            headerZapDot.title = `ZAP: ${kind}${text}${zap.nativeError ? ` (${zap.nativeError})` : ''}`;
-          }
-          setStatus(mcpStatus, mcpPort, false, text);
-        }
+      const n = zap.mcpConsumers || 1;
+      const clients = `${n} client${n === 1 ? '' : 's'}`;
+      const kind = zap.errorKind && zap.errorKind !== 'none' ? `[${zap.errorKind}] ` : '';
+      const mcpText = zap.connected
+        ? (zap.mcpReachable ? `${clients} (${via})` : `Router ready (${via})`)
+        : text;
+      setStatus(mcpStatus, mcpPort, zap.connected, mcpText);
+      if (headerZapDot) {
+        headerZapDot.classList.toggle('connected', Boolean(zap.connected));
+        headerZapDot.title = zap.connected
+          ? (zap.mcpReachable ? `MCP reachable (${clients} via ${via})` : `ZAP connected (${text})`)
+          : `ZAP: ${kind}${text}${zap.nativeError ? ` (${zap.nativeError})` : ''}`;
       }
     });
 
