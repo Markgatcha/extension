@@ -120,7 +120,7 @@
         },
         "hanzo.llm.hanzo.model": {
           "type": "string",
-          "default": "zen5",
+          "default": "enso",
           "description": "Model on api.hanzo.ai for @hanzo when the chat view's model is not a Hanzo model, and for the AI tools; any id GET https://api.hanzo.ai/v1/models lists"
         },
         "hanzo.llm.hanzo.apiKey": {
